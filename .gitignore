@@ -1,0 +1,43 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Streamlit
+.streamlit/
+! .streamlit/config.toml
+
+# Secrets
+.streamlit/secrets.toml
+.env
+
+# PDF files (Temporary)
+*.pdf
+
+# Excel files (Temporary)
+*.xlsx
+*.xls
+
+# ZIP files
+*.zip
+
+# Virtual Environment
+venv/
+.venv/
+env/
+bin/
+lib/
+share/
+Include/
+Scripts/
+pyvenv.cfg
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Project specific
+temp/
+logs/

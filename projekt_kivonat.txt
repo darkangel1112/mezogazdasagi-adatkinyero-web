@@ -1,0 +1,1581 @@
+--- START OF FILE ./main.py ---
+
+# Fájlnév: main.py
+import sys
+import os
+import time
+from tkinterdnd2 import TkinterDnD
+import tkinter as tk
+from tkinter import font
+from PIL import Image, ImageTk
+
+# A saját moduljaink importálása a megfelelő alkönyvtárakból
+from GUI.gui_manager import GUIManager
+
+def resource_path(relative_path):
+    """
+    Ez a kulcsfontosságú függvény biztosítja, hogy a program mindig megtalálja
+    az 'assets' mappát (és a benne lévő ikonokat, képeket), függetlenül attól,
+    hogy fejlesztői környezetben (.py fájlként) vagy egyetlen .exe fájlba
+    csomagolva futtatjuk.
+    """
+    try:
+        base_path = sys._MEIPASS
+    except Exception:
+        base_path = os.path.abspath(".")
+    return os.path.join(base_path, relative_path)
+
+def create_splash_screen(root):
+    """Létrehoz és megjelenít egy betöltő képernyőt."""
+    splash = tk.Toplevel(root)
+    splash.overrideredirect(True)
+
+    try:
+        img = Image.open(resource_path("assets/logo.png"))
+        img.thumbnail((480, 480), Image.Resampling.LANCZOS)
+        splash_logo = ImageTk.PhotoImage(img)
+
+        splash_width = splash_logo.width()
+        splash_height = splash_logo.height() + 50
+
+        screen_width = splash.winfo_screenwidth()
+        screen_height = splash.winfo_screenheight()
+        x = (screen_width // 2) - (splash_width // 2)
+        y = (screen_height // 2) - (splash_height // 2)
+        splash.geometry(f'{splash_width}x{splash_height}+{x}+{y}')
+
+        tk.Label(splash, image=splash_logo, borderwidth=0).pack(pady=10)
+        splash.image = splash_logo
+        
+        bold_font = font.Font(family="Segoe UI", size=12, weight="bold")
+        tk.Label(splash, text="Mezőgazdasági Adatkinyerő Program Indítása...", font=bold_font).pack()
+    except Exception as e:
+        print(f"Hiba a betöltő kép betöltésekor: {e}")
+        splash_width, splash_height = 480, 530
+        splash.geometry(f'{splash_width}x{splash_height}')
+        tk.Label(splash, text="Logó nem található...").pack(pady=20)
+
+    splash.update()
+    return splash
+
+if __name__ == "__main__":
+    MIN_SPLASH_TIME_SEC = 3.0
+    start_time = time.time()
+
+    root = TkinterDnD.Tk()
+    root.withdraw()
+
+    splash = create_splash_screen(root)
+
+    app = GUIManager(root, resource_path_func=resource_path)
+
+    # Számoljuk ki a hátralévő időt a minimum 3 másodperchez
+    duration = time.time() - start_time
+    delay_ms = int((MIN_SPLASH_TIME_SEC - duration) * 1000) if duration < MIN_SPLASH_TIME_SEC else 0
+
+    def show_main_window():
+        splash.destroy()
+        root.deiconify()
+
+    # Időzítő beállítása, ami a hátralévő idő után jeleníti meg a főablakot
+    root.after(delay_ms, show_main_window)
+    
+    root.mainloop()
+
+--- END OF FILE ---
+
+--- START OF FILE ./README.md ---
+
+# Mezőgazdasági Adatkinyerő v7.3 - Dokumentáció
+
+Ez a dokumentum a projekt felépítését, a modulok szerepét és a bennük található kulcsfontosságú függvények működését írja le. Célja, hogy segítse a jövőbeli karbantartást és fejlesztést.
+
+## Projekt Struktúra
+
+A projekt egy modularizált, logikailag szétválasztott struktúrát követ a jobb karbantarthatóság érdekében.
+EK_Feldlogzo_Projekt/
+│
+├── main.py # Alkalmazás indítópontja
+│
+├── GUI/
+│ └── gui_manager.py # Felhasználói felület és eseménykezelés
+│
+├── dataprocess/
+│ ├── fovetes_parser.py # Fővetés adatainak kinyerése
+│ ├── masodvetes_parser.py # Másodvetés/Agrotechnika adatainak kinyerése
+│ └── osszesitok_parser.py # Összesítő táblázatok kinyerése
+│
+├── dataexport/
+│ └── excel_exporter.py # Excel exportálási logika
+│
+└── assets/
+├── icon.ico # Alkalmazás ikon
+├── logo.png # GUI-ban megjelenő kép
+└── help.txt # Súgó szöveges fájl
+
+
+## Modulok és Függvények
+
+### `main.py`
+A program belépési pontja.
+- **`resource_path(relative_path)`**: Kulcsfontosságú segédfüggvény. Biztosítja, hogy az `assets` mappa erőforrásai (ikon, kép, súgó) elérhetők legyenek, akár fejlesztői környezetben (`.py`-ból futtatva), akár egyetlen `.exe` fájlba csomagolva.
+- **Fő logika**: Létrehozza a `tkinterdnd2` főablakot, példányosítja a `GUIManager` osztályt és elindítja az alkalmazást.
+
+### `GUI/gui_manager.py`
+Felelős a teljes grafikus felületért és a felhasználói interakciók kezeléséért.
+- **`GUIManager` osztály**: A fő osztály, ami összefogja a GUI-t.
+    - `__init__(self, root, ...)`: Felépíti az ablakot, a fő szekciókat (felső, középső, alsó), létrehozza a widgeteket és elindítja a `queue` figyelő ciklust.
+    - `_create_*_widgets()`: A különböző GUI szekciókat (bemeneti lista, opciók, füles nézet, gombok, státuszsor) létrehozó segédfüggvények.
+    - `_start_processing_thread()`: A "Feldolgozás" gomb eseménykezelője. Elindít egy háttérszálat (`threading.Thread`), hogy a GUI ne fagyjon le a feldolgozás alatt.
+    - `_process_files()`: Ez a függvény fut a háttérszálon. Végigiterál a PDF listán, és minden fájlra meghívja a `dataprocess` mappában lévő parser függvényeket. Az eredményeket és a státuszüzeneteket egy `queue`-ba (üzenetsorba) helyezi.
+    - `process_queue()`: A fő GUI szálon futó ciklus (100ms-onként). Figyeli a `queue`-t, és ha üzenet érkezik, frissíti a GUI-t (státuszüzenet, progress bar). Ez a biztonságos módja a szálak közötti kommunikációnak.
+    - `_on_processing_finished()`: Akkor hívódik meg, ha a feldolgozás befejeződött. Feltölti a fájlválasztó legördülő menüt és kiválasztja az első elemet.
+    - `_on_file_selected()`: Akkor hívódik meg, ha a felhasználó új fájlt választ a legördülő menüből. Betölti a kiválasztott fájl adatait a füles táblázatokba.
+    - `_populate_tree()`: Egy segédfüggvény, ami egy adott `Treeview` táblázatot tölt fel adatokkal, kezelve a `DataFrame` és a `list` típusokat is, valamint az "Összesen" sorokat.
+    - `_start_export_thread()`: Az "Exportálás" gomb eseménykezelője, elindítja az exportálást egy háttérszálon.
+
+### `dataprocess/fovetes_parser.py`
+Felelős a "7 - Táblaadatok" (Fővetés) szekció kinyeréséért.
+- **`extract_fovetes_data(pdf_path)`**: A modul fő függvénye.
+    - **Visszatérési érték**: Egy `pandas.DataFrame`, ami a kinyert, megtisztított és a térképes oldalakról származó metaadatokkal (vármegye, település) kiegészített fővetési adatokat tartalmazza.
+
+### `dataprocess/masodvetes_parser.py`
+Felelős a "8 — Másodvetés/Agrotechnika" szekció kinyeréséért.
+- **`extract_masodvetes_data(pdf_path)`**: A modul fő függvénye.
+    - **Visszatérési érték**: Egy lista, amiben listák vannak. Minden belső lista egy-egy kinyert adatsort reprezentál a Másodvetés táblázatból.
+
+### `dataprocess/osszesitok_parser.py`
+Felelős a három összesítő táblázat kinyeréséért.
+- **`extract_summary_data(pdf_path)`**: A modul fő függvénye.
+    - **Visszatérési érték**: Egy `dictionary` (szótár), ami a következő kulcsokat tartalmazza: `jogcim` (lista), `hasznositas` (lista), `hasznositas_total` (float), `blokkok` (lista), `blokkok_total` (float).
+
+### `dataexport/excel_exporter.py`
+Felelős a kinyert adatok `.xlsx` fájl(ok)ba történő mentéséért.
+- **`export_to_excel(processed_data, output_option, file_list, gui_queue)`**: A modul fő függvénye.
+    - **`processed_data`**: A `GUIManager`-től kapott teljes adatstruktúra.
+    - **`output_option`**: A felhasználó által választott mentési mód (`SEPARATE` vagy `COMBINE`).
+    - **Logika**: A választott opció alapján vagy több, 5 munkalapos fájlt hoz létre, vagy egyetlen, sok (`fájlok_száma * 5`) munkalapos fájlt. Kezeli a munkalapnevek érvényesítését és az oszlopok automatikus méretezését.
+
+--- END OF FILE ---
+
+--- START OF FILE ./create_bundle.py ---
+
+# Fájlnév: create_bundle.py
+import os
+
+# A projektmappák és fájlok, amiket össze akarunk fűzni
+project_structure = {
+    ".": [
+        "main.py",
+        "README.md",
+        "create_bundle.py" # Opcionális: a szkript saját magát is beleteheti
+    ],
+    "GUI": [
+        "gui_manager.py"
+    ],
+    "dataprocess": [
+        "fovetes_parser.py",
+        "masodvetes_parser.py",
+        "osszesitok_parser.py",
+        "adatfeldolgozas_parser.py" # HOZZÁADVA
+    ],
+    "dataexport": [
+        "excel_exporter.py"
+    ],
+    "assets": [
+        "help.txt"
+    ]
+}
+
+output_filename = "projekt_kivonat.txt"
+
+def create_project_bundle():
+    """
+    Összegyűjti a megadott projektfájlok tartalmát egyetlen szövegfájlba.
+    """
+    try:
+        with open(output_filename, "w", encoding="utf-8") as bundle_file:
+            for directory, filenames in project_structure.items():
+                for filename in filenames:
+                    # Az útvonalakat helyesen építjük fel a könyvtárnév alapján
+                    filepath = os.path.join(directory, filename)
+                    
+                    if os.path.exists(filepath):
+                        print(f"Feldolgozás: {filepath}")
+                        
+                        # Elválasztó a fájlnévvel
+                        bundle_file.write(f"--- START OF FILE {filepath.replace(os.sep, '/')} ---\n\n")
+                        
+                        # Fájl tartalmának beolvasása és írása
+                        with open(filepath, "r", encoding="utf-8") as source_file:
+                            bundle_file.write(source_file.read())
+                        
+                        # Lezáró sorok a jobb olvashatóságért
+                        bundle_file.write("\n\n--- END OF FILE ---\n\n")
+                    else:
+                        print(f"Figyelmeztetés: A(z) '{filepath}' fájl nem található, kihagyva.")
+        
+        print(f"\nSiker! A projekt összefűzve a(z) '{output_filename}' fájlba.")
+
+    except Exception as e:
+        print(f"\nHiba történt a fájlok összefűzése közben: {e}")
+
+if __name__ == "__main__":
+    create_project_bundle()
+
+--- END OF FILE ---
+
+--- START OF FILE GUI/gui_manager.py ---
+
+# Fájlnév: GUI/gui_manager.py
+import tkinter as tk
+from tkinter import ttk, filedialog, messagebox, font
+import threading
+import os
+import pandas as pd
+from PIL import Image, ImageTk
+from tkinterdnd2 import DND_FILES, TkinterDnD
+import queue
+
+# A saját modulok, beleértve az újat is
+from dataprocess.fovetes_parser import extract_fovetes_data
+from dataprocess.masodvetes_parser import extract_masodvetes_data
+from dataprocess.osszesitok_parser import extract_summary_data
+# JAVÍTVA: A gépelési hiba ('adatfeldgozas' -> 'adatfeldolgozas') javítva
+from dataprocess.adatfeldolgozas_parser import create_analysis_report
+from dataexport.excel_exporter import export_to_excel
+
+class GUIManager:
+    def __init__(self, root, resource_path_func):
+        self.root = root
+        self.resource_path = resource_path_func
+        # Verziószám frissítése
+        self.root.title("Mezőgazdasági Adatkinyerő v7.4")
+
+        self.processed_data = {}
+        self.current_file_list = []
+        self.gui_queue = queue.Queue()
+
+        try:
+            self.root.iconbitmap(self.resource_path("assets/icon.ico"))
+        except Exception:
+            print("Ikonfájl (assets/icon.ico) nem található.")
+
+        self.root.geometry("1400x900")
+        self.root.minsize(1200, 800)
+        self.setup_styles()
+
+        top_frame = ttk.Frame(self.root, padding="20 10")
+        top_frame.pack(fill=tk.X, side=tk.TOP)
+        top_frame.columnconfigure(0, weight=2)
+        top_frame.columnconfigure(1, weight=2)
+        top_frame.columnconfigure(2, weight=1)
+
+        status_frame = ttk.Frame(self.root, padding="20 5")
+        status_frame.pack(fill=tk.X, side=tk.TOP)
+
+        results_frame = ttk.Frame(self.root, padding="20 10")
+        results_frame.pack(fill=tk.BOTH, expand=True)
+        results_frame.columnconfigure(0, weight=1)
+        results_frame.rowconfigure(1, weight=1)
+
+        bottom_frame = ttk.Frame(self.root, padding="10 10")
+        bottom_frame.pack(fill=tk.X, side=tk.BOTTOM)
+
+        self._create_input_widgets(top_frame)
+        self._create_output_options_widgets(top_frame)
+        self._add_top_logo(top_frame)
+        self._create_status_section(status_frame)
+        self._create_results_notebook(results_frame)
+        self._create_action_buttons(bottom_frame)
+        self._create_status_bar(bottom_frame)
+
+        self.process_queue()
+
+    def setup_styles(self):
+        self.style = ttk.Style(self.root)
+        self.style.theme_use("clam")
+        self.header_font = font.Font(family="Segoe UI", size=12, weight="bold")
+        self.label_font = font.Font(family="Segoe UI", size=10)
+        self.button_font = font.Font(family="Segoe UI", size=10, weight="bold")
+        self.status_font = font.Font(family="Segoe UI", size=10)
+        self.copyright_font = font.Font(family="Segoe UI", size=8)
+        self.report_font = font.Font(family="Consolas", size=10)
+
+        self.style.configure("TLabel", font=self.label_font)
+        self.style.configure("Header.TLabel", font=self.header_font)
+        self.style.configure("TButton", font=self.button_font, padding=5)
+        self.style.configure("Accent.TButton", font=self.button_font, foreground="white", background="#0078D7", padding=8)
+        self.style.map("Accent.TButton", background=[("active", "#005A9E")])
+        self.style.configure("Smooth.Horizontal.TProgressbar", troughcolor="#E0E0E0", background="#0078D7", lightcolor="#0078D7", darkcolor="#005A9E")
+
+    def _create_input_widgets(self, parent):
+        frame = ttk.LabelFrame(parent, text="Bemeneti Fájlok", labelwidget=ttk.Label(parent, text="Bemeneti Fájlok", style="Header.TLabel"))
+        frame.grid(row=0, column=0, sticky="nsew", padx=(0, 10), pady=(0, 10))
+        frame.columnconfigure(0, weight=1)
+        frame.columnconfigure(1, weight=0)
+        frame.rowconfigure(0, weight=1)
+        
+        list_frame = ttk.Frame(frame)
+        list_frame.grid(row=0, column=0, sticky="nsew", padx=15, pady=15)
+        list_frame.columnconfigure(0, weight=1)
+        list_frame.rowconfigure(0, weight=1)
+        
+        self.file_listbox = tk.Listbox(list_frame, selectmode=tk.EXTENDED, height=8)
+        self.file_listbox.grid(row=0, column=0, sticky="nsew")
+        self.file_listbox.drop_target_register(DND_FILES)
+        self.file_listbox.dnd_bind('<<Drop>>', self.handle_drop)
+        
+        scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=self.file_listbox.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.file_listbox.config(yscrollcommand=scrollbar.set)
+        
+        button_frame = ttk.Frame(frame)
+        button_frame.grid(row=0, column=1, sticky="ns", padx=(0, 15), pady=15)
+        ttk.Button(button_frame, text="Hozzáadás...", command=self.add_files).pack(fill=tk.X, pady=2)
+        ttk.Button(button_frame, text="Beillesztés", command=self.paste_from_clipboard).pack(fill=tk.X, pady=2)
+        ttk.Button(button_frame, text="Kijelölt törlése", command=self.remove_selected).pack(fill=tk.X, pady=(10, 2))
+        ttk.Button(button_frame, text="Lista törlése", command=self.clear_list).pack(fill=tk.X, pady=2)
+
+    def _create_output_options_widgets(self, parent):
+        self.output_options_frame = ttk.LabelFrame(parent, text="Kimeneti Opciók", labelwidget=ttk.Label(parent, text="Kimeneti Opciók", style="Header.TLabel"))
+        self.output_options_frame.grid(row=0, column=1, sticky="nsew", padx=10, pady=(0, 10))
+        
+        self.output_option_var = tk.StringVar(value="SEPARATE")
+        ttk.Radiobutton(self.output_options_frame, text="Minden PDF-hez külön Excel fájl", variable=self.output_option_var, value="SEPARATE").pack(anchor="w", padx=15, pady=8)
+        ttk.Radiobutton(self.output_options_frame, text="Összes adat egy új Excel fájlba\n(fájlonként külön munkalapok)", variable=self.output_option_var, value="COMBINE").pack(anchor="w", padx=15, pady=8)
+        ttk.Radiobutton(self.output_options_frame, text="Összes adat hozzáfűzése egy meglévő\nExcelhez (hamarosan)", variable=self.output_option_var, value="APPEND", state="disabled").pack(anchor="w", padx=15, pady=8)
+
+    def _add_top_logo(self, parent):
+        logo_container = ttk.Frame(parent)
+        logo_container.grid(row=0, column=2, sticky="nsew", padx=(10, 0))
+        logo_container.columnconfigure(0, weight=1)
+        logo_container.rowconfigure(0, weight=1)
+
+        try:
+            self.output_options_frame.update_idletasks()
+            target_height = self.output_options_frame.winfo_height() - 20
+            
+            img = Image.open(self.resource_path("assets/logo.png"))
+            w, h = img.size
+            ratio = w / h
+            new_width = int(target_height * ratio)
+            
+            resized_img = img.resize((new_width, target_height), Image.Resampling.LANCZOS)
+            self.top_logo_image = ImageTk.PhotoImage(resized_img)
+            
+            logo_label = ttk.Label(logo_container, image=self.top_logo_image)
+            logo_label.grid(row=0, column=0, sticky="")
+        except Exception as e:
+            print(f"Felső logó (assets/logo.png) nem tölthető be: {e}")
+
+    def _create_results_notebook(self, parent):
+        file_selector_frame = ttk.Frame(parent)
+        file_selector_frame.grid(row=0, column=0, sticky='ew', pady=(10, 5))
+        ttk.Label(file_selector_frame, text="Megjelenített fájl:").pack(side=tk.LEFT, padx=(0, 5))
+        self.file_combobox = ttk.Combobox(file_selector_frame, state="readonly", width=80)
+        self.file_combobox.pack(side=tk.LEFT, fill=tk.X, expand=True)
+        self.file_combobox.bind("<<ComboboxSelected>>", self._on_file_selected)
+
+        self.notebook = ttk.Notebook(parent)
+        self.notebook.grid(row=1, column=0, sticky="nsew")
+        self.tabs, self.trees = {}, {}
+        
+        tab_configs = {
+            "Összefoglaló": [],
+            "Fővetés": ['Vármegye', 'Település', 'Blokk', 'Tábla', 'Kód', 'Név', 'Méret (ha)', 'ÖKO', 'Szap.anyag', 'Telepítés', 'Termőre ford.', 'Nitrát'],
+            "Másodvetés": ['Blokk', 'Tábla', 'Sorszám', 'Típus', 'Megnevezés', 'Anyag', 'Növény kód', 'Terület (ha)'],
+            "Jogcímek": ['Támogatási jogcím', 'Terület (ha)'],
+            "Hasznosítás": ['Kód', 'Megnevezés', 'Terület (ha)'],
+            "Blokkok": ['Blokk azonosító', 'Terület (ha)']
+        }
+        
+        for name, cols in tab_configs.items():
+            tab = ttk.Frame(self.notebook, padding="5")
+            self.notebook.add(tab, text=name)
+            self.tabs[name] = tab
+            
+            tab.columnconfigure(0, weight=1)
+            tab.rowconfigure(0, weight=1)
+
+            if name == "Összefoglaló":
+                self.analysis_text = tk.Text(tab, wrap=tk.NONE, font=self.report_font, state=tk.DISABLED, relief=tk.FLAT, background=self.root.cget('bg'))
+                v_scroll = ttk.Scrollbar(tab, orient="vertical", command=self.analysis_text.yview)
+                h_scroll_text = ttk.Scrollbar(tab, orient="horizontal", command=self.analysis_text.xview)
+                self.analysis_text.configure(yscrollcommand=v_scroll.set, xscrollcommand=h_scroll_text.set)
+                
+                self.analysis_text.grid(row=0, column=0, sticky="nsew")
+                v_scroll.grid(row=0, column=1, sticky="ns")
+                h_scroll_text.grid(row=1, column=0, sticky="ew")
+            else:
+                tree = ttk.Treeview(tab, columns=cols, show='headings')
+                for col in cols:
+                    anchor = 'w' if col in ['Támogatási jogcím', 'Név', 'Megnevezés'] else 'center'
+                    tree.heading(col, text=col, anchor=anchor)
+                    tree.column(col, width=120, minwidth=80, anchor=anchor)
+                
+                v_scroll = ttk.Scrollbar(tab, orient="vertical", command=tree.yview)
+                h_scroll = ttk.Scrollbar(tab, orient="horizontal", command=tree.xview)
+                tree.configure(yscrollcommand=v_scroll.set, xscrollcommand=h_scroll.set)
+                
+                tree.grid(row=0, column=0, sticky="nsew")
+                v_scroll.grid(row=0, column=1, sticky="ns")
+                h_scroll.grid(row=1, column=0, sticky="ew")
+                
+                self.trees[name] = tree
+                if name in ["Hasznosítás", "Blokkok"]:
+                    tree.tag_configure('total_row', font=('TkDefaultFont', 9, 'bold'))
+
+    def _process_files(self):
+        self.processed_data.clear()
+        total_files = len(self.current_file_list)
+        for i, f_path in enumerate(self.current_file_list):
+            filename = os.path.basename(f_path)
+            try:
+                data = {}
+                self.gui_queue.put(f"Feldolgozás ({i+1}/{total_files}): {filename} (Fővetés...)")
+                data["Fővetés"] = extract_fovetes_data(f_path)
+                
+                self.gui_queue.put(f"Feldolgozás ({i+1}/{total_files}): {filename} (Másodvetés...)")
+                data["Másodvetés"] = extract_masodvetes_data(f_path)
+                
+                self.gui_queue.put(f"Feldolgozás ({i+1}/{total_files}): {filename} (Összesítők...)")
+                osszesitok = extract_summary_data(f_path)
+                data.update({
+                    "Jogcímek": osszesitok.get('jogcim', []),
+                    "Hasznosítás": osszesitok.get('hasznositas', []),
+                    "Hasznosítás_total": osszesitok.get('hasznositas_total', 0.0),
+                    "Blokkok": osszesitok.get('blokkok', []),
+                    "Blokkok_total": osszesitok.get('blokkok_total', 0.0)
+                })
+                
+                self.gui_queue.put(f"Feldolgozás ({i+1}/{total_files}): {filename} (Elemzés készítése...)")
+                analysis_data = create_analysis_report(data, f_path)
+                data["Adatfeldolgozás"] = analysis_data
+
+                self.processed_data[filename] = data
+            except Exception as e:
+                print(f"Hiba a feldolgozás során ({filename}): {e}")
+                self.processed_data[filename] = {"error": str(e)}
+        self.gui_queue.put("DONE_PROCESSING")
+
+    def _on_file_selected(self, event=None):
+        selected_file = self.file_combobox.get()
+        if not selected_file: return
+        data = self.processed_data.get(selected_file, {})
+        
+        if "error" in data:
+            for tree in self.trees.values():
+                for item in tree.get_children(): tree.delete(item)
+                tree.insert("", "end", values=["Hiba a fájl feldolgozása során:"] + [""] * (len(tree['columns'])-1) )
+            self._populate_analysis_tab({"error": data["error"]})
+            return
+        
+        self._populate_tree("Fővetés", data.get("Fővetés"))
+        self._populate_tree("Másodvetés", data.get("Másodvetés", []))
+        self._populate_tree("Jogcímek", data.get("Jogcímek", []))
+        self._populate_tree("Hasznosítás", data.get("Hasznosítás", []), data.get("Hasznosítás_total", 0.0))
+        self._populate_tree("Blokkok", data.get("Blokkok", []), data.get("Blokkok_total", 0.0))
+        
+        self._populate_analysis_tab(data.get("Adatfeldolgozás", {}))
+
+    def _populate_analysis_tab(self, analysis_data):
+        self.analysis_text.config(state=tk.NORMAL)
+        self.analysis_text.delete(1.0, tk.END)
+
+        if analysis_data is None:
+            self.analysis_text.config(state=tk.DISABLED)
+            return
+
+        if "error" in analysis_data:
+            self.analysis_text.insert(tk.END, f"Hiba az elemzés készítésekor:\n{analysis_data.get('error', 'Ismeretlen hiba.')}")
+            self.analysis_text.config(state=tk.DISABLED)
+            return
+
+        self.analysis_text.tag_configure("header", font=self.header_font, spacing3=10)
+        self.analysis_text.tag_configure("bold", font=self.button_font)
+        
+        info = analysis_data.get("applicant_info", {})
+        self.analysis_text.insert(tk.END, "Kérelmező Adatai\n", "header")
+        self.analysis_text.insert(tk.END, "{:<25}".format("Gazda megnevezése:"), "bold")
+        self.analysis_text.insert(tk.END, f"{info.get('name', 'N/A')}\n")
+        self.analysis_text.insert(tk.END, "{:<25}".format("MÁK Azonosító:"), "bold")
+        self.analysis_text.insert(tk.END, f"{info.get('mak_id', 'N/A')}\n")
+
+        self.analysis_text.insert(tk.END, "\nTerület Kimutatás (Önellenőrzéssel)\n", "header")
+        df = analysis_data.get("summary_df")
+        if df is not None and not df.empty:
+            table_str = df.to_string(index=False, float_format="%.4f")
+            self.analysis_text.insert(tk.END, table_str)
+        
+        stats = analysis_data.get("extra_stats", {})
+        self.analysis_text.insert(tk.END, "\n\nKiegészítő Statisztikák\n", "header")
+        self.analysis_text.insert(tk.END, "{:<35}".format("Nitrátérzékeny terület összesen:"), "bold")
+        self.analysis_text.insert(tk.END, f"{stats.get('nitrate_sum', 0.0):.4f} ha\n".replace('.',','))
+        self.analysis_text.insert(tk.END, "{:<35}".format("5 legnagyobb tábla területe:"), "bold")
+        self.analysis_text.insert(tk.END, f"{stats.get('top_5_plots_sum', 0.0):.4f} ha\n".replace('.',','))
+        
+        self.analysis_text.insert(tk.END, "\nElvégzett Agrotechnikai Műveletek\n", "header")
+        for tech in stats.get("agrotechnics", ["Nincs adat."]):
+            self.analysis_text.insert(tk.END, f" • {tech}\n")
+
+        self.analysis_text.insert(tk.END, "\nKiválasztott Támogatási Igények\n", "header")
+        requests = stats.get("support_requests", ["Nem található."])
+        for req in requests:
+            self.analysis_text.insert(tk.END, f" • {req}\n")
+
+        self.analysis_text.config(state=tk.DISABLED)
+
+    def clear_list(self):
+        self.file_listbox.delete(0, tk.END); self.processed_data.clear()
+        self.file_combobox['values'] = []; self.file_combobox.set('')
+        for tree in self.trees.values():
+            for item in tree.get_children(): tree.delete(item)
+        # JAVÍTVA: A _populate_analysis_tab-ot None-nal hívjuk, hogy törölje a tartalmát
+        self._populate_analysis_tab(None) 
+        self.export_button.config(state="disabled")
+        self.status_var.set("Készen áll. Adjon hozzá PDF fájlokat a listához.")
+
+    # --- A többi, változatlan függvény... ---
+    def _create_status_section(self, parent):
+        frame = ttk.LabelFrame(parent, text="Állapot", labelwidget=ttk.Label(parent, text="Állapot", style="Header.TLabel"))
+        frame.pack(fill=tk.X, pady=(0, 10))
+        self.status_var = tk.StringVar(value="Készen áll. Adjon hozzá PDF fájlokat a listához.")
+        status_label = ttk.Label(frame, textvariable=self.status_var, font=self.status_font)
+        status_label.pack(anchor="w", padx=15, pady=10)
+
+    def _create_action_buttons(self, parent):
+        self.process_button = ttk.Button(parent, text="Feldolgozás", style="Accent.TButton", command=self._start_processing_thread)
+        self.process_button.pack(side=tk.LEFT, padx=(0, 5))
+        self.export_button = ttk.Button(parent, text="Exportálás", command=self._start_export_thread, state="disabled")
+        self.export_button.pack(side=tk.LEFT, padx=5)
+        ttk.Button(parent, text="Súgó", command=self._show_help).pack(side=tk.LEFT, padx=5)
+        ttk.Button(parent, text="Bezárás", command=self.root.destroy).pack(side=tk.LEFT, padx=5)
+
+    def _create_status_bar(self, parent):
+        try:
+            img = Image.open(self.resource_path("assets/logo.png"))
+            img.thumbnail((24, 24), Image.Resampling.LANCZOS)
+            self.logo_image = ImageTk.PhotoImage(img)
+            logo_label = ttk.Label(parent, image=self.logo_image)
+            logo_label.pack(side=tk.LEFT, padx=(10, 5))
+        except Exception as e:
+            print(f"Logó (assets/logo.png) nem tölthető be: {e}")
+        self.progress_bar = ttk.Progressbar(parent, mode="indeterminate", style="Smooth.Horizontal.TProgressbar", length=200)
+        self.progress_bar.pack(side=tk.LEFT, padx=5, expand=True, fill=tk.X)
+        copyright_label = ttk.Label(parent, text="Készült Péter ötletei alapján a Gemini AI segítségével | v7.4", font=self.copyright_font, foreground="gray")
+        copyright_label.pack(side=tk.RIGHT, padx=10)
+
+    def process_queue(self):
+        try:
+            message = self.gui_queue.get_nowait()
+            if isinstance(message, str):
+                if message == "DONE_PROCESSING": self._on_processing_finished()
+                elif message == "DONE_EXPORT": self._on_export_finished()
+                else: self.status_var.set(message)
+        except queue.Empty: pass
+        finally: self.root.after(100, self.process_queue)
+
+    def _start_processing_thread(self):
+        self.current_file_list = self.file_listbox.get(0, tk.END)
+        if not self.current_file_list:
+            messagebox.showwarning("Hiányzó adatok", "A feldolgozáshoz adjon hozzá legalább egy PDF fájlt.")
+            return
+        self._toggle_controls("disabled")
+        self.progress_bar.start()
+        threading.Thread(target=self._process_files, daemon=True).start()
+
+    def _start_export_thread(self):
+        if not self.processed_data:
+            messagebox.showwarning("Nincs adat", "Nincs mit exportálni.")
+            return
+        output_option = self.output_option_var.get()
+        file_count = len(self.current_file_list)
+        output_path, output_directory = None, None
+        try:
+            if output_option == "SEPARATE":
+                if file_count == 1:
+                    first_file = os.path.basename(self.current_file_list[0])
+                    default_name = f"{os.path.splitext(first_file)[0]}_kivonat.xlsx"
+                    output_path = filedialog.asksaveasfilename(title="Excel fájl mentése", defaultextension=".xlsx", filetypes=[("Excel fájlok", "*.xlsx"), ("Minden fájl", "*.*")], initialfile=default_name)
+                    if not output_path: return
+                else:
+                    output_directory = filedialog.askdirectory(title="Válasszon könyvtárat az Excel fájlok mentéséhez")
+                    if not output_directory: return
+            elif output_option == "COMBINE":
+                output_path = filedialog.asksaveasfilename(title="Egyesített Excel fájl mentése", defaultextension=".xlsx", filetypes=[("Excel fájlok", "*.xlsx"), ("Minden fájl", "*.*")], initialfile="egyesitett_kivonat.xlsx")
+                if not output_path: return
+            self._toggle_controls("disabled")
+            self.progress_bar.start()
+            threading.Thread(target=self._export_files, args=(output_option, output_path, output_directory), daemon=True).start()
+        except Exception as e: messagebox.showerror("Hiba", f"Hiba a fájl kiválasztása során: {e}")
+
+    def _export_files(self, output_option, output_path=None, output_directory=None):
+        try:
+            success = export_to_excel(self.processed_data, output_option, self.current_file_list, self.gui_queue, output_path=output_path, output_directory=output_directory)
+            if success: self.gui_queue.put("DONE_EXPORT")
+        except Exception as e:
+            self.gui_queue.put(f"Exportálási hiba: {e}")
+            self.gui_queue.put("DONE_EXPORT")
+
+    def handle_drop(self, event): self.add_files_to_list(self.root.tk.splitlist(event.data))
+    def add_files(self):
+        paths = filedialog.askopenfilenames(title="PDF fájlok kiválasztása", filetypes=[("PDF Fájlok", "*.pdf")])
+        if paths: self.add_files_to_list(paths)
+    def paste_from_clipboard(self):
+        try: self.add_files_to_list(self.root.clipboard_get().split('\n'))
+        except tk.TclError: messagebox.showwarning("Hiba", "A vágólap üres vagy nem tartalmaz szöveget.")
+    def add_files_to_list(self, paths):
+        for p in paths:
+            p_clean = p.strip().replace('{','').replace('}','')
+            if p_clean and os.path.exists(p_clean) and p_clean.lower().endswith('.pdf'):
+                if p_clean not in self.file_listbox.get(0, tk.END): self.file_listbox.insert(tk.END, p_clean)
+        self.status_var.set(f"{self.file_listbox.size()} fájl a listában.")
+    def remove_selected(self):
+        for i in reversed(self.file_listbox.curselection()): self.file_listbox.delete(i)
+        self.status_var.set(f"{self.file_listbox.size()} fájl a listában.")
+
+    def _toggle_controls(self, state="normal"):
+        for widget in [self.process_button, self.export_button]: 
+            widget.config(state=state if widget != self.export_button or self.processed_data else "disabled")
+
+    def _on_processing_finished(self):
+        self.progress_bar.stop(); self._toggle_controls("normal")
+        self.status_var.set("Feldolgozás kész. Válasszon fájlt a legördülő menüből.")
+        file_names = list(self.processed_data.keys()); self.file_combobox['values'] = file_names
+        if file_names: self.file_combobox.set(file_names[0]); self._on_file_selected()
+
+    def _populate_tree(self, name, data, total=None):
+        tree = self.trees.get(name)
+        if not tree: return
+        for item in tree.get_children(): tree.delete(item)
+        if isinstance(data, pd.DataFrame):
+            for _, row in data.iterrows(): tree.insert("", "end", values=list(row.fillna("N/A")))
+        elif isinstance(data, list):
+            for row in data: tree.insert("", "end", values=row)
+        if total is not None and total > 0:
+            total_str = f"{total:.4f}".replace('.', ',')
+            if name == "Hasznosítás": tree.insert("", "end", values=('', 'Összesen:', total_str), tags=('total_row',))
+            elif name == "Blokkok": tree.insert("", "end", values=('Összesen:', total_str), tags=('total_row',))
+
+    def _on_export_finished(self):
+        self.progress_bar.stop(); self._toggle_controls("normal")
+        status = self.status_var.get()
+        if "hiba" in status.lower(): messagebox.showerror("Hiba", status)
+        else: self.status_var.set("Exportálás sikeresen befejeződött."); messagebox.showinfo("Siker", "Az exportálás sikeresen befejeződött.")
+
+    def _show_help(self):
+        try:
+            with open(self.resource_path("assets/help.txt"), "r", encoding="utf-8") as f: help_content = f.read()
+        except FileNotFoundError: help_content = "A súgófájl (assets/help.txt) nem található."
+        help_window = tk.Toplevel(self.root); help_window.title("Súgó"); help_window.geometry("700x500")
+        text_area = tk.Text(help_window, wrap=tk.WORD, padx=10, pady=10, font=self.label_font); text_area.pack(expand=True, fill=tk.BOTH)
+        text_area.insert(tk.END, help_content); text_area.config(state=tk.DISABLED)
+        ttk.Button(help_window, text="Bezárás", command=help_window.destroy).pack(pady=10)
+        help_window.transient(self.root); help_window.grab_set()
+
+--- END OF FILE ---
+
+--- START OF FILE dataprocess/fovetes_parser.py ---
+
+# Fájlnév: dataprocess/fovetes_parser.py
+import re
+import pandas as pd
+import pdfplumber
+
+def extract_fovetes_data(pdf_path: str) -> pd.DataFrame:
+    """
+    Fő belépési pont a fővetés adatainak kinyeréséhez egy adott PDF fájlból.
+
+    Args:
+        pdf_path (str): A feldolgozandó PDF fájl elérési útja.
+
+    Returns:
+        pd.DataFrame: Egy DataFrame, amely a kinyert és rendezett fővetési adatokat
+                      tartalmazza. Ha nincs adat, üres DataFrame-et ad vissza.
+    """
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            # 1. Kinyerjük a blokk-szintű részleteket (vármegye, település, stb.) a térképes oldalakról.
+            block_details_lookup = _extract_block_details_from_maps(pdf)
+            
+            # 2. Kinyerjük a "7 - Táblaadatok" szekcióból a részletes táblaadatokat.
+            all_plots_data = _extract_main_table_data(pdf)
+
+        if not all_plots_data:
+            return pd.DataFrame()
+
+        # 3. Összefésüljük és formázzuk az adatokat.
+        df = pd.DataFrame(all_plots_data)
+        
+        # Duplikátumok eltávolítása, a legelső előfordulást tartjuk meg.
+        df_final = df.drop_duplicates(subset=["Blokk", "Tábla"], keep="first").copy()
+        
+        # A blokk-szintű részletek hozzárendelése a táblaadatokhoz a blokk azonosító alapján.
+        df_final["Vármegye"] = df_final["Blokk"].map(lambda x: block_details_lookup.get(x, {}).get("varmegye", "N/A"))
+        df_final["Település"] = df_final["Blokk"].map(lambda x: block_details_lookup.get(x, {}).get("telepules", "N/A"))
+        df_final["Nitrát"] = df_final["Blokk"].map(lambda x: block_details_lookup.get(x, {}).get("nitrat", "Nem"))
+        df_final["Tábla"] = pd.to_numeric(df_final["Tábla"], errors="coerce").astype("Int64")
+        
+        # A végső oszlopok sorrendjének meghatározása a GUI-nak megfelelően.
+        ordered_columns = [
+            "Vármegye", "Település", "Blokk", "Tábla", "Kód", "Név", 
+            "Méret (ha)", "ÖKO", "Szap.anyag", "Telepítés", 
+            "Termőre ford.", "Nitrát"
+        ]
+        df_final = df_final.reindex(columns=ordered_columns, fill_value="N/A")
+        
+        return df_final
+    except Exception as e:
+        print(f"Hiba történt a fővetési adatok feldolgozása során: {e}")
+        return pd.DataFrame()
+
+
+def _extract_block_details_from_maps(pdf: pdfplumber.PDF) -> dict:
+    """
+    Segédfüggvény: Kinyeri a PDF térképes oldalairól a blokk-szintű adatokat.
+    """
+    block_details_lookup = {}
+    block_pattern = re.compile(r"Blokkazonosító:\s*([A-Z0-9]+)")
+    nitrat_pattern = re.compile(r"Nitrátérzékeny terület:\s*(Igen|Nem)")
+    varmegye_pattern = re.compile(r"Vármegye:\s*([^\n]+)")
+    telepules_pattern = re.compile(r"Település:\s*([^\n]+)")
+
+    for page in pdf.pages:
+        text = page.extract_text(x_tolerance=1, y_tolerance=1)
+        if text and "A kiemelt fizikai blokk adatai:" in text:
+            block_match = block_pattern.search(text)
+            if block_match:
+                block_id = block_match.group(1).strip()
+                if block_id not in block_details_lookup:
+                    nitrat_match = nitrat_pattern.search(text)
+                    varmegye_match = varmegye_pattern.search(text)
+                    telepules_match = telepules_pattern.search(text)
+                    
+                    # Tisztítás, hogy ne csússzanak bele más mezők adatai
+                    varmegye_clean = varmegye_match.group(1).split("Blokkazonosító:")[0].strip() if varmegye_match else "N/A"
+                    telepules_clean = telepules_match.group(1).split("Összterület:")[0].strip() if telepules_match else "N/A"
+                    
+                    block_details_lookup[block_id] = {
+                        "nitrat": nitrat_match.group(1).strip() if nitrat_match else "N/A",
+                        "varmegye": varmegye_clean,
+                        "telepules": telepules_clean
+                    }
+    return block_details_lookup
+
+
+def _extract_main_table_data(pdf: pdfplumber.PDF) -> list:
+    """
+    Segédfüggvény: Kinyeri a PDF-ből a "7 - Táblaadatok" szekció tartalmát.
+    """
+    all_plots_data = []
+    
+    # Az egész PDF szövegét egyetlen stringgé fűzzük a megbízhatóbb keresésért.
+    full_text = "".join(page.extract_text(x_tolerance=1, y_tolerance=1) or "" for page in pdf.pages)
+    
+    # Ez a regex keresi a "Blokk: ... Tábla: ..." kezdetű blokkokat, és mindent
+    # begyűjt a következő ilyen blokkig vagy a dokumentum más fő szekciójáig.
+    block_pattern = re.compile(
+        r"Blokk:\s*(.*?)\s+Tábla:\s*(.*?)\s*(?:Állapot:\s*(.*?))?\n(.*?)(?=(?:Blokk: |8 — Másodvetés/Agrotechnika|—{3,}))", 
+        re.DOTALL
+    )
+    
+    for match in block_pattern.finditer(full_text):
+        block_id_str, table_id_str, status_str, content = match.groups()
+        
+        # Visszavont állapotú táblák kihagyása
+        if status_str and "visszavont" in status_str.lower():
+            continue
+
+        plot_data = {"Blokk": block_id_str.strip(), "Tábla": table_id_str.strip()}
+        
+        # Alapvető, kötelező adatok kinyerése
+        fonoveny_match = re.search(r"Főnövény hasznosítási kód:\s*([A-Z0-9]+)\s*(.*?)\n", content)
+        terulet_match = re.search(r"Tábla igényelt terület \(ha\):\s*([\d,.]+)", content)
+        
+        # Ha a kötelező adatok hiányoznak, a blokk érvénytelen, kihagyjuk
+        if not (fonoveny_match and terulet_match):
+            continue
+
+        plot_data["Kód"] = fonoveny_match.group(1).strip()
+        plot_data["Név"] = fonoveny_match.group(2).strip().split("Kockázatkezelés")[0].strip()
+        
+        try:
+            plot_data["Méret (ha)"] = float(terulet_match.group(1).strip().replace(",", "."))
+        except (ValueError, AttributeError):
+            plot_data["Méret (ha)"] = 0.0
+        
+        # Opcionális mezők kinyerése (ha léteznek)
+        optional_fields = {
+            "ÖKO": r"Ökológiai gazdálkodás:\s*([A-Za-zÁ-ú]+)",
+            "Szap.anyag": r"Szaporítóanyag célra:\s*([A-Za-zÁ-ú]+)",
+            "Telepítés": r"Főnövény vetési/telepítési időpontja:\s*([\d\.]+)",
+            "Termőre ford.": r"Ültetvény termőre fordulásának éve:\s*(\d{4})"
+        }
+        
+        for key, pattern in optional_fields.items():
+            match_obj = re.search(pattern, content)
+            plot_data[key] = match_obj.group(1).strip() if match_obj else "N/A"
+            
+        all_plots_data.append(plot_data)
+
+    return all_plots_data
+
+--- END OF FILE ---
+
+--- START OF FILE dataprocess/masodvetes_parser.py ---
+
+# Fájlnév: dataprocess/masodvetes_parser.py
+import re
+import pdfplumber
+
+def extract_masodvetes_data(pdf_path: str) -> list:
+    """
+    Fő belépési pont a másodvetés/agrotechnika adatainak kinyeréséhez.
+    
+    Args:
+        pdf_path (str): A feldolgozandó PDF fájl elérési útja.
+        
+    Returns:
+        list: Lista, amelyben a kinyert adatsorokat tartalmazó listák vannak.
+              Ha nincs adat, üres listát ad vissza.
+    """
+    data = []
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            # 1. Az összes oldal szövegét kinyerjük és karaktertisztítást végzünk.
+            full_text_pages = [_clean_text(page.extract_text()) for page in pdf.pages if page.extract_text()]
+            full_cleaned_text = "\n".join(full_text_pages)
+
+            # 2. Megkeressük a "Másodvetés/Agrotechnika" szekció kezdetét.
+            masodvetes_section_start = full_cleaned_text.lower().find("másodvetés/agrotechnika")
+            if masodvetes_section_start == -1:
+                return [] # Ha nincs ilyen szekció, nincs teendő.
+            
+            # Csak a releváns szövegrésszel dolgozunk tovább.
+            relevant_text_segment = full_cleaned_text[masodvetes_section_start:]
+            
+            # 3. A szöveget blokkokra bontjuk a "Blokk: ... Tábla: ..." minta alapján.
+            raw_blocks_split = re.split(r'(Blokk:\s*[A-Z0-9]+\s+Tábla:\s*\d+/\d+)', relevant_text_segment)
+            
+            # 4. Végigiterálunk a blokkokon és feldolgozzuk őket.
+            for i in range(1, len(raw_blocks_split), 2):
+                if i + 1 < len(raw_blocks_split):
+                    # Összefűzzük a blokk fejlécét és a tartalmát.
+                    current_operation_block = f"{raw_blocks_split[i].strip()}\n{raw_blocks_split[i+1].strip()}"
+                    entry_data = _parse_masodvetes_entry(current_operation_block)
+                    if entry_data:
+                        data.append(entry_data)
+        return data
+    except Exception as e:
+        print(f"Hiba történt a másodvetés adatok feldolgozása során: {e}")
+        return []
+
+def _clean_text(text: str) -> str:
+    """Segédfüggvény a speciális karakterhibák javítására."""
+    if not text: return ""
+    replacements = {
+        'È': 'é', 'Û': 'ő', '·': 'á', 'ı': 'í', 'Ì': 'í', '¸': 'ü', 'ˆ': 'ö',
+        '†': '', '£': 'Á', 'ÈrintÈs': 'érintés', 'k·r': 'kár', 'ter¸let': 'terület',
+        'sorsz·ma': 'sorszáma', 'tÌpusa': 'típusa', 'idıpontja': 'időpontja',
+        'alkalmaz·sa': 'alkalmazása', 'kÈszÌtmÈny': 'készítmény',
+        'megnevezÈse': 'megnevezése', 'Kasz·l·s': 'Kaszálás', 'M·sodvetÈs': 'Másodvetés',
+        'Agrotechnika': 'Agrotechnika', 'gyepesÌtÈssel': 'gyepesítéssel',
+        'Sorkˆztakar·s': 'Sorköztakarás', 'KondÌcion·lÛ': 'Kondicionáló',
+        'NitrogÈnmegkˆtı': 'Nitrogénmegkötő', 'kÈszÌtmÈnyek': 'készítmények',
+        'sz·rsÈrtı': 'szársértő', 'nÈlk¸li': 'nélküli', 'haszn·lat·val': 'használatával',
+        'altern·lÛ': 'alternáló', 'tervezett': 'tervezett', 'vetÈsi': 'vetési',
+        'hasznosÌt·si': 'hasznosítási', 'form·ja': 'formája', 'jelentısÈg˚': 'jelentőségű',
+        '÷kolÛgiai': 'Ökológiai', 'laz·s': 'lazítás', 'KˆzÈpmÈly': 'Középmély',
+        'lazÌt·s': 'lazítás', 'MellÈktermÈk': 'Melléktermék',
+        'visszaforgatasa': 'visszaforgatása', 'Ist·llÛtr·gya': 'Istállótrágya',
+        'kijuttat·sa': 'kijuttatása'
+    }
+    for old, new in replacements.items():
+        text = text.replace(old, new)
+    return text
+
+def _extract_after_keyword(text: str, keyword: str, stop_words: list = None, colon_optional: bool = False) -> str:
+    """Általános kulcsszó utáni szöveg kinyerő függvény."""
+    if stop_words is None:
+        stop_words = ["Igényelt", "Kijuttatás", "Másodvetés", "Agrotechnika", "Hasznosítás"]
+    
+    # Kulcsszó után minden a sortörésig vagy stop szóig
+    stop_pattern = "|".join([re.escape(word) for word in stop_words])
+    
+    if colon_optional:
+        # Opcionális kettőspont - kettősponttal vagy anélkül
+        pattern = rf'{re.escape(keyword)}:?\s*([^\n\r]+?)(?=\s*(?:{stop_pattern})|\s*$)'
+    else:
+        # Kötelező kettőspont
+        pattern = rf'{re.escape(keyword)}:\s*([^\n\r]+?)(?=\s*(?:{stop_pattern})|\s*$)'
+    
+    match = re.search(pattern, text, re.IGNORECASE)
+    return match.group(1).strip() if match else "N/A"
+
+def _parse_masodvetes_entry(block_text: str) -> list or None:
+    """Egyetlen másodvetés/agrotechnika bejegyzést dolgoz fel a szöveges blokkból."""
+    try:
+        # Alapadatok kinyerése
+        blokk_match = re.search(r'Blokk:\s*([A-Z0-9]+).*?Tábla:\s*(\d+)/(\d+)', block_text.split('\n')[0])
+        if not blokk_match: 
+            return None
+        
+        blokk_id, tabla_id, muvelet_szam_part = blokk_match.groups()
+        muvelet_szam = f"{tabla_id}/{muvelet_szam_part}"
+        
+        # Sorszám kinyerése (alternatív)
+        sorszam_match = re.search(r'sorszáma:\s*(\d+/\d+)', block_text)
+        if sorszam_match:
+            muvelet_szam = sorszam_match.group(1)
+        
+        # Terület kinyerése
+        terulet_match = re.search(r'Igényelt terület \(ha\):\s*([\d,\.]+)', block_text)
+        terulet = terulet_match.group(1).replace(',', '.') if terulet_match else "N/A"
+        
+        # Kezdeti értékek
+        tipus, megnevezes, kijuttatott_anyag, noveny_kod = "N/A", "N/A", "N/A", "N/A"
+        
+        # Típus meghatározás és adatok kinyerése
+        if "Agrotechnika típusa:" in block_text:
+            tipus = "Agrotechnika"
+            megnevezes = _extract_agrotechnika_type(block_text)
+            # Kondicionáló készítmény keresése
+            if "Kondicionáló" in block_text:
+                kijuttatott_anyag = _extract_kondicionalo_nev(block_text)
+                
+        elif "Másodvetés típusa:" in block_text:
+            tipus = "Másodvetés"
+            megnevezes = _extract_masodvetes_type(block_text)
+            kijuttatott_anyag, noveny_kod = _extract_masodvetes_noveny(block_text)
+        
+        return [blokk_id, tabla_id, muvelet_szam, tipus, megnevezes, kijuttatott_anyag, noveny_kod, terulet]
+        
+    except Exception:
+        return None
+
+def _extract_kondicionalo_nev(text: str) -> str:
+    """Kinyeri a kondicionáló készítmény nevét."""
+    # Elsődleges módszer - kulcsszó alapú kinyerés
+    kondicionalo_nev = _extract_after_keyword(text, "Kondicionáló készítmény megnevezése", 
+                                            ["Kijuttatás", "Igényelt", "Másodvetés", "Agrotechnika"],
+                                            colon_optional=True)
+    
+    if kondicionalo_nev != "N/A":
+        # További tisztítás
+        cleaned_name = re.sub(r'\s*(?:WDGT|Egy\s+elem).*', '', kondicionalo_nev, flags=re.IGNORECASE).strip()
+        return cleaned_name if cleaned_name else "N/A"
+    
+    # Fallback - egyszerű direkt keresés (ez oldotta meg a problémát)
+    direct_match = re.search(r'Kondicionáló készítmény megnevezése\s*:?\s*([^\n\r]+)', text, re.IGNORECASE)
+    if direct_match:
+        direct_result = direct_match.group(1).strip()
+        return direct_result
+    
+    return "N/A"
+
+def _extract_agrotechnika_type(text: str) -> str:
+    """Kinyeri az agrotechnika típusát kulcsszó alapú kinyeréssel."""
+    # Kulcsszó alapú kinyerés - bármi az "Agrotechnika típusa:" után
+    return _extract_after_keyword(text, "Agrotechnika típusa", 
+                                ["Igényelt", "Kijuttatás", "Kaszálás tervezett", "Kondicionáló készítmény"])
+
+def _extract_masodvetes_type(text: str) -> str:
+    """Kinyeri a másodvetés típusát kulcsszó alapú kinyeréssel."""
+    # Kulcsszó alapú kinyerés - bármi a "Másodvetés típusa:" után
+    return _extract_after_keyword(text, "Másodvetés típusa", 
+                                ["Hasznosítás", "Igényelt", "Vegyes hasznosítás"])
+
+def _extract_masodvetes_noveny(text: str) -> tuple:
+    """Kinyeri a másodvetéshez tartozó növény nevét és kódját."""
+    # Egyszerű hasznosítás keresése: "Hasznosítás: ABC12 Növény név"
+    hasznositas_match = re.search(r'Hasznosítás:\s*([A-Z0-9]+)\s+([^\n\r]+?)(?=\s*(?:Vegyes|Másodvetés|Igényelt|$))', text, re.IGNORECASE)
+    if hasznositas_match:
+        kod = hasznositas_match.group(1)
+        nev = hasznositas_match.group(2).strip()
+        return nev, kod
+    
+    # Vegyes hasznosítás keresése: "Vegyes hasznosítás [A-Z]: ABC12 Növény név"
+    vegyes_matches = re.findall(r'Vegyes hasznosítás [A-Z]:\s*([A-Z0-9]+)\s+([^\n\r]+?)(?=\s*(?:Vegyes hasznosítás|Igényelt|Másodvetés|$))', text, re.IGNORECASE)
+    if vegyes_matches:
+        nevek = []
+        kodok = []
+        for kod, nev in vegyes_matches:
+            # Tisztítás
+            clean_nev = re.sub(r'\s*(?:Igényelt|Másodvetés|tervezett).*', '', nev.strip())
+            if clean_nev:
+                nevek.append(clean_nev)
+                kodok.append(kod.strip())
+        
+        if nevek and kodok:
+            return ", ".join(nevek), ", ".join(kodok)
+    
+    return "N/A", "N/A"
+
+--- END OF FILE ---
+
+--- START OF FILE dataprocess/osszesitok_parser.py ---
+
+# Fájlnév: dataprocess/osszesitok_parser.py
+import re
+import pdfplumber
+
+def extract_summary_data(pdf_path: str) -> dict:
+    """
+    Fő belépési pont a három összesítő táblázat adatainak kinyeréséhez.
+    
+    Args:
+        pdf_path (str): A feldolgozandó PDF fájl elérési útja.
+        
+    Returns:
+        dict: Egy szótár, amely tartalmazza a három táblázat adatait és az
+              összesített értékeket.
+    """
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            full_text = "\n".join([page.extract_text() for page in pdf.pages if page.extract_text()])
+
+        # Regex-ek, amelyek a következő táblázat címénél vagy egy új fejezetnél megállnak.
+        jogcim_regex = r"Támogatási jogcímek és AKG célprogramok szerint\s*\n(.*?)(?=Területek összesítése hasznosítási adatok szerint)"
+        hasznositas_regex = r"Hasznosítási adatok szerint.*?\(főnövény, másodvetés, agrotechnika\)\s*\n(.*?)(?=Területek összesítése blokkhasználat szerint)"
+        blokk_regex = r"Területek összesítése blokkhasználat szerint\s*\n(.*?)(?=\n\d+\s*—|\n[A-Z\s]+ nyilatkozat|\Z)"
+
+        jogcim_match = re.search(jogcim_regex, full_text, re.DOTALL | re.IGNORECASE)
+        hasznositas_match = re.search(hasznositas_regex, full_text, re.DOTALL | re.IGNORECASE)
+        blokk_match = re.search(blokk_regex, full_text, re.DOTALL | re.IGNORECASE)
+
+        jogcim_data = _parse_jogcim_table(jogcim_match.group(1)) if jogcim_match else []
+        hasznositas_data, hasznositas_total = _parse_hasznositas_table(hasznositas_match.group(1)) if hasznositas_match else ([], 0.0)
+        blokk_data, blokk_total = _parse_blokk_table(blokk_match.group(1)) if blokk_match else ([], 0.0)
+
+        return {
+            'jogcim': jogcim_data,
+            'hasznositas': hasznositas_data,
+            'hasznositas_total': hasznositas_total,
+            'blokkok': blokk_data,
+            'blokkok_total': blokk_total
+        }
+    except Exception as e:
+        print(f"Hiba történt az összesítő adatok feldolgozása során: {e}")
+        return {}
+
+def _parse_jogcim_table(text_block: str) -> list:
+    """Feldolgozza a támogatási jogcímek táblázatának szövegét."""
+    data = []
+    lines = text_block.strip().split('\n')
+    # Kihagyjuk a fejlécet, ha tartalmazza a kulcsszavakat
+    if lines and ("Támogatási jogcímek" in lines[0] or "Igényelt terület" in lines[0]):
+        lines = lines[1:]
+    
+    for line in lines:
+        # A minta: bármilyen szöveg, majd szóközök, és a végén egy szám.
+        match = re.match(r'^(.*?)\s+([\d,.]+)$', line.strip())
+        if match:
+            nev, terulet_str = match.groups()
+            try:
+                terulet = float(terulet_str.replace(',', '.'))
+                # Formázás tizedesvesszővel a GUI számára
+                data.append([nev.strip(), f"{terulet:.4f}".replace('.', ',')])
+            except ValueError:
+                continue
+    return data
+
+def _parse_hasznositas_table(text_block: str) -> tuple:
+    """Feldolgozza a hasznosítási adatok táblázatának szövegét."""
+    data = []
+    total_ha = 0.0
+    lines = text_block.strip().split('\n')
+    if lines and ("Hasznosítás kód" in lines[0] or "Igényelt terület" in lines[0]):
+        lines = lines[1:]
+
+    # A minta: 3 betű, 2 szám, szóköz, majd a név, végül a terület
+    pattern = re.compile(r"^([A-Z]{3}\d{2})\s+(.+?)\s+([\d,.]+)$")
+    for line in lines:
+        match = pattern.match(line.strip())
+        if match:
+            kod, megnevezes, terulet_str = match.groups()
+            try:
+                terulet = float(terulet_str.replace(',', '.'))
+                total_ha += terulet
+                data.append([kod, megnevezes.strip(), f"{terulet:.4f}".replace('.', ',')])
+            except ValueError:
+                continue
+    return data, total_ha
+        
+def _parse_blokk_table(text_block: str) -> tuple:
+    """Feldolgozza a blokkhasználati adatok táblázatának szövegét."""
+    data = []
+    total_ha = 0.0
+    lines = text_block.strip().split('\n')
+    if lines and ("Blokk" in lines[0] or "Igényelt terület" in lines[0]):
+        lines = lines[1:]
+    
+    for line in lines:
+        parts = line.strip().split()
+        if len(parts) == 2:
+            blokk_id, terulet_str = parts
+            
+            # Szigorú ellenőrzés a blokk azonosító formátumára
+            has_letter = any(c.isalpha() for c in blokk_id)
+            has_digit = any(c.isdigit() for c in blokk_id)
+            
+            if len(blokk_id) == 8 and has_letter and has_digit:
+                try:
+                    terulet = float(terulet_str.replace(',', '.'))
+                    total_ha += terulet
+                    data.append([blokk_id, f"{terulet:.4f}".replace('.', ',')])
+                except ValueError:
+                    continue
+    return data, total_ha
+
+--- END OF FILE ---
+
+--- START OF FILE dataprocess/adatfeldolgozas_parser.py ---
+
+# Fájlnév: dataprocess/adatfeldgozas_parser.py
+import pandas as pd
+import re
+import pdfplumber
+
+def _extract_applicant_data(pdf_path: str) -> dict:
+    """
+    Kinyeri a kérelmező/kedvezményezett nevét és támogatási azonosítóját a PDF-ből.
+    Ez a verzió kezeli a sortörés nélküli és a több kötőjeles formátumot is.
+    """
+    applicant_info = {'name': 'N/A', 'mak_id': 'N/A'}
+    
+    # Robusztus regex minták, amelyek több formátumot is lefednek
+    name_pattern = re.compile(
+        r"(?:Kedvezményezett neve|4\s*-*\s*Kedvezményezett adatai\s*Név):\s*([^\n\r]+)", 
+        re.IGNORECASE | re.DOTALL
+    )
+    id_pattern = re.compile(
+        r"A kérelmező támogatási azonosítója:\s*(\d{10})|Támogatási azonosító:\s*(\d{10})"
+    )
+
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            # Az első néhány oldalon keressük az adatokat
+            for page in pdf.pages[:3]:
+                text = page.extract_text(x_tolerance=2, layout=True)
+                if not text: continue
+                
+                # Név keresése
+                if applicant_info['name'] == 'N/A':
+                    name_match = name_pattern.search(text)
+                    if name_match:
+                        # A regex több csoportot is tartalmazhat, megtaláljuk az első nem üres találatot
+                        name = next((g for g in name_match.groups() if g is not None), None)
+                        if name:
+                            applicant_info['name'] = name.strip()
+                
+                # Azonosító keresése
+                if applicant_info['mak_id'] == 'N/A':
+                    id_match = id_pattern.search(text)
+                    if id_match:
+                        # A regex több csoportot is tartalmazhat, megtaláljuk az első nem üres találatot
+                        mak_id = next((g for g in id_match.groups() if g is not None), None)
+                        if mak_id:
+                            applicant_info['mak_id'] = mak_id.strip()
+                
+                if applicant_info['name'] != 'N/A' and applicant_info['mak_id'] != 'N/A':
+                    break
+    except Exception as e:
+        print(f"Hiba a kérelmező adatainak kinyerése során: {e}")
+    
+    return applicant_info
+
+def _extract_support_requests(pdf_path: str) -> list:
+    """
+    Kinyeri a kipipált támogatási igényeket a PDF-ből.
+    """
+    checked_items = []
+    
+    try:
+        with pdfplumber.open(pdf_path) as pdf:
+            target_page_index = -1
+            
+            for i, page in enumerate(pdf.pages[:4]):
+                text_content = page.extract_text()
+                if text_content and ("Támogatási/kifizetési igények" in text_content):
+                    target_page_index = i
+                    break
+            
+            if target_page_index == -1:
+                return []
+
+            page = pdf.pages[target_page_index]
+            text = page.extract_text()
+            
+            if not text:
+                return []
+            
+            # Csak a "q4" karakterekkel jelölt elemeket keressük (ezek a kipipáltak)
+            pattern = re.compile(r'q4\s+([^\n\rq]+)', re.MULTILINE)
+            
+            matches = pattern.findall(text)
+            for match in matches:
+                clean_line = match.strip()
+                clean_line = re.sub(r'\s+', ' ', clean_line)
+                
+                if len(clean_line) > 3:
+                    checked_items.append(clean_line)
+            
+            # Ha nem találtunk semmit, próbáljuk alternatív módszerrel
+            if not checked_items:
+                lines = text.split('\n')
+                
+                for i, line in enumerate(lines):
+                    if line.strip().startswith('q4'):
+                        # A következő sorban keressük a támogatás nevét
+                        if i + 1 < len(lines):
+                            next_line = lines[i + 1].strip()
+                            if len(next_line) > 3 and not next_line.startswith('q'):
+                                checked_items.append(next_line)
+                            
+    except Exception as e:
+        print(f"Hiba a támogatási igények kinyerése során: {e}")
+    
+    return checked_items
+
+def create_analysis_report(processed_data: dict, pdf_path: str) -> dict:
+    """
+    Elkészíti a vezetői összefoglaló riportot a már feldolgozott adatokból.
+    """
+    applicant_info = _extract_applicant_data(pdf_path)
+    
+    fovetes_df = processed_data.get("Fővetés")
+    masodvetes_list = processed_data.get("Másodvetés", [])
+    hasznositas_list = processed_data.get("Hasznosítás", [])
+
+    if fovetes_df is None or fovetes_df.empty:
+        return {"error": "A riport készítéséhez hiányoznak a Fővetés adatok."}
+
+    fovetes_sum = fovetes_df.groupby('Név')['Méret (ha)'].sum().reset_index()
+    fovetes_sum.rename(columns={'Név': 'Megnevezés', 'Méret (ha)': 'Fővetés (Számított)'}, inplace=True)
+
+    masodvetes_df = pd.DataFrame(masodvetes_list, columns=['Blokk', 'Tábla', 'Sorszám', 'Típus', 'Megnevezés', 'Anyag', 'Növény kód', 'Terület (ha)'])
+    masodvetes_df['Terület (ha)'] = pd.to_numeric(masodvetes_df['Terület (ha)'], errors='coerce').fillna(0)
+    
+    masodvetes_sum = masodvetes_df[masodvetes_df['Típus'] == 'Másodvetés'].groupby('Anyag')['Terület (ha)'].sum().reset_index()
+    masodvetes_sum.rename(columns={'Anyag': 'Megnevezés', 'Terület (ha)': 'Másodvetés (Számított)'}, inplace=True)
+    
+    hasznositas_df = pd.DataFrame(hasznositas_list, columns=['Kód', 'Megnevezés', 'Terület (Eredeti)'])
+    hasznositas_df['Terület (Eredeti)'] = pd.to_numeric(hasznositas_df['Terület (Eredeti)'].str.replace(',', '.'), errors='coerce').fillna(0)
+
+    all_plants = pd.concat([
+        hasznositas_df['Megnevezés'],
+        fovetes_sum['Megnevezés'],
+        masodvetes_sum['Megnevezés']
+    ]).unique()
+    
+    report_df = pd.DataFrame(all_plants, columns=['Megnevezés'])
+    report_df = pd.merge(report_df, hasznositas_df, on='Megnevezés', how='left')
+    report_df = pd.merge(report_df, fovetes_sum, on='Megnevezés', how='left')
+    report_df = pd.merge(report_df, masodvetes_sum, on='Megnevezés', how='left')
+    
+    report_df.fillna({'Terület (Eredeti)': 0.0, 'Fővetés (Számított)': 0.0, 'Másodvetés (Számított)': 0.0, 'Kód': 'N/A'}, inplace=True)
+    report_df['Összesen (Számított)'] = report_df['Fővetés (Számított)'] + report_df['Másodvetés (Számított)']
+    
+    final_columns = ['Kód', 'Megnevezés', 'Terület (Eredeti)', 'Fővetés (Számított)', 'Másodvetés (Számított)', 'Összesen (Számított)']
+    report_df = report_df[final_columns]
+    
+    sum_row = pd.DataFrame({
+        'Kód': [''],
+        'Megnevezés': ['Összesen:'],
+        'Terület (Eredeti)': [report_df['Terület (Eredeti)'].sum()],
+        'Fővetés (Számított)': [report_df['Fővetés (Számított)'].sum()],
+        'Másodvetés (Számított)': [report_df['Másodvetés (Számított)'].sum()],
+        'Összesen (Számított)': [report_df['Összesen (Számított)'].sum()]
+    })
+    report_df = pd.concat([report_df, sum_row], ignore_index=True)
+    
+    nitrat_sum = fovetes_df[fovetes_df['Nitrát'] == 'Igen']['Méret (ha)'].sum()
+    top_5_sum = fovetes_df.nlargest(5, 'Méret (ha)')['Méret (ha)'].sum()
+    agrotechnika_list = masodvetes_df[masodvetes_df['Típus'] == 'Agrotechnika']['Megnevezés'].unique().tolist()
+    
+    support_requests = _extract_support_requests(pdf_path)
+    
+    analysis_data = {
+        "applicant_info": applicant_info,
+        "summary_df": report_df,
+        "extra_stats": {
+            "nitrate_sum": nitrat_sum,
+            "top_5_plots_sum": top_5_sum,
+            "agrotechnics": agrotechnika_list if agrotechnika_list else ["Nincs agrotechnikai művelet."],
+            "support_requests": support_requests if support_requests else ["Nincs támogatási igény kiválasztva."]
+        }
+    }
+    
+    return analysis_data
+
+--- END OF FILE ---
+
+--- START OF FILE dataexport/excel_exporter.py ---
+
+# Fájlnév: dataexport/excel_exporter.py
+import pandas as pd
+import os
+import re
+
+def _write_analysis_report_to_writer(writer: pd.ExcelWriter, data_dict: dict, sheet_name: str):
+    workbook = writer.book
+    worksheet = workbook.add_worksheet(sheet_name)
+    
+    bold_format = workbook.add_format({'bold': True})
+    header_format = workbook.add_format({'bold': True, 'bg_color': '#DDEBF7', 'border': 1})
+    number_format = workbook.add_format({'num_format': '0.0000', 'border': 1})
+    text_format = workbook.add_format({'border': 1})
+    total_format = workbook.add_format({'bold': True, 'num_format': '0.0000', 'bg_color': '#F2F2F2', 'top': 1})
+    
+    # JAVÍTVA: A riport adatait az "Adatfeldolgozás" kulcs alól vesszük
+    report_data = data_dict.get("Adatfeldolgozás", {})
+    if not report_data:
+        worksheet.write(0, 0, "Hiba: Az elemzési riport adatai hiányoznak.")
+        return
+
+    row_idx = 0
+    worksheet.write(row_idx, 0, "Gazda megnevezése:", bold_format)
+    worksheet.write(row_idx, 1, report_data.get("applicant_info", {}).get("name", "N/A"))
+    row_idx += 1
+    worksheet.write(row_idx, 0, "MÁK Azonosító:", bold_format)
+    worksheet.write(row_idx, 1, report_data.get("applicant_info", {}).get("mak_id", "N/A"))
+    
+    row_idx += 2
+    
+    df = report_data.get("summary_df")
+    if df is not None and not df.empty:
+        for col_idx, col_name in enumerate(df.columns):
+            worksheet.write(row_idx, col_idx, col_name, header_format)
+        
+        row_idx += 1
+        for _, row_data in df.iterrows():
+            # Az utolsó, "Összesen:" sor formázásának kezelése
+            is_total_row = row_data.get('Megnevezés') == 'Összesen:'
+            current_num_format = total_format if is_total_row else number_format
+            current_text_format = workbook.add_format({'bold': True, 'bg_color': '#F2F2F2', 'top': 1}) if is_total_row else text_format
+
+            for col_idx, cell_data in enumerate(row_data):
+                format_to_use = current_num_format if isinstance(cell_data, (int, float)) else current_text_format
+                worksheet.write(row_idx, col_idx, cell_data, format_to_use)
+            row_idx += 1
+
+    row_idx += 1 # Hagyunk egy üres sort
+
+    stats = report_data.get("extra_stats", {})
+    worksheet.write(row_idx, 0, "Nitrátérzékeny terület (összesen):", bold_format)
+    worksheet.write_number(row_idx, 1, stats.get("nitrate_sum", 0), workbook.add_format({'num_format': '0.0000'}))
+    row_idx += 1
+    worksheet.write(row_idx, 0, "5 legnagyobb tábla területe (összesen):", bold_format)
+    worksheet.write_number(row_idx, 1, stats.get("top_5_plots_sum", 0), workbook.add_format({'num_format': '0.0000'}))
+    
+    row_idx += 2
+    worksheet.write(row_idx, 0, "Elvégzett agrotechnikai műveletek:", bold_format)
+    row_idx += 1
+    for tech in stats.get("agrotechnics", []):
+        worksheet.write(row_idx, 0, tech)
+        row_idx += 1
+
+    row_idx += 1
+    worksheet.write(row_idx, 0, "Kiválasztott Támogatási Igények:", bold_format)
+    row_idx += 1
+    for req in stats.get("support_requests", []):
+        worksheet.write(row_idx, 0, req)
+        row_idx += 1
+
+    worksheet.set_column('A:A', 15)
+    worksheet.set_column('B:B', 40)
+    worksheet.set_column('C:F', 20)
+
+def export_to_excel(processed_data: dict, output_option: str, file_list: list, gui_queue=None, 
+                   output_path=None, output_directory=None) -> bool:
+    def update_status(message):
+        if gui_queue: gui_queue.put(message)
+
+    if not processed_data: return False
+
+    try:
+        if output_option == "SEPARATE":
+            total_files = len(file_list)
+            for i, file_path in enumerate(file_list):
+                filename = os.path.basename(file_path)
+                update_status(f"Exportálás ({i+1}/{total_files}): {filename}")
+                data = processed_data.get(filename)
+                if data and "error" not in data:
+                    output_name = output_path if total_files == 1 and output_path else os.path.join(output_directory, f"{os.path.splitext(filename)[0]}_kivonat.xlsx")
+                    _write_single_file_excel(output_name, data)
+        
+        elif output_option == "COMBINE":
+            if not output_path:
+                update_status("Hiba: Nincs megadva kimeneti útvonal!")
+                return False
+            update_status("Összesített Excel fájl írása...")
+            with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
+                for filename, data in processed_data.items():
+                    if "error" in data: continue
+                    sheet_prefix = _sanitize_sheet_name(os.path.splitext(filename)[0])
+                    _write_sheets_to_writer(writer, data, sheet_prefix)
+        
+        return True
+    except Exception as e:
+        update_status(f"Exportálási hiba: {e}")
+        return False
+
+def _write_single_file_excel(output_path: str, data_dict: dict):
+    with pd.ExcelWriter(output_path, engine='xlsxwriter') as writer:
+        _write_sheets_to_writer(writer, data_dict)
+
+def _write_sheets_to_writer(writer: pd.ExcelWriter, data_dict: dict, sheet_prefix=""):
+    prefix = f"{sheet_prefix}_" if sheet_prefix else ""
+    
+    export_map = {
+        "Adatfeldolgozás": [],
+        "Fővetés": list(data_dict.get("Fővetés").columns) if isinstance(data_dict.get("Fővetés"), pd.DataFrame) else [],
+        "Másodvetés": ['Blokk', 'Tábla', 'Sorszám', 'Típus', 'Megnevezés', 'Anyag', 'Növény kód', 'Terület (ha)'],
+        "Jogcímek": ['Támogatási jogcím', 'Terület (ha)'],
+        "Hasznosítás": ['Kód', 'Megnevezés', 'Terület (ha)'],
+        "Blokkok": ['Blokk azonosító', 'Terület (ha)']
+    }
+
+    for sheet_name, columns in export_map.items():
+        data = data_dict.get(sheet_name)
+        
+        final_sheet_name = _sanitize_sheet_name(f"{prefix}{sheet_name}")
+
+        if sheet_name == "Adatfeldolgozás":
+            _write_analysis_report_to_writer(writer, data_dict, final_sheet_name)
+            continue
+            
+        if data is None or (isinstance(data, list) and not data):
+             continue
+
+        if isinstance(data, pd.DataFrame):
+            df = data.copy()
+        else:
+            df = pd.DataFrame(data, columns=columns)
+        
+        numeric_columns = _identify_numeric_columns(df, sheet_name)
+        
+        if sheet_name != "Fővetés":
+            for col in numeric_columns:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col].astype(str).str.replace(',', '.'), errors='coerce')
+        
+        if sheet_name in ["Hasznosítás", "Blokkok"]:
+            total = data_dict.get(f"{sheet_name.lower()}_total", 0.0)
+            if total > 0:
+                total_row = ['Összesen:', total] if sheet_name == "Blokkok" else ['', 'Összesen:', total]
+                while len(total_row) < len(df.columns): total_row.insert(0, '')
+                df.loc[len(df)] = total_row
+
+        df.to_excel(writer, sheet_name=final_sheet_name, index=False)
+        _autoformat_columns(writer, final_sheet_name, df, numeric_columns)
+
+def _identify_numeric_columns(df: pd.DataFrame, sheet_name: str) -> list:
+    numeric_cols = []
+    if sheet_name == "Fővetés": numeric_cols = ["Méret (ha)"]
+    elif sheet_name == "Másodvetés": numeric_cols = ["Terület (ha)"]
+    elif sheet_name in ["Jogcímek", "Hasznosítás", "Blokkok"]: numeric_cols = ["Terület (ha)"]
+    return [col for col in numeric_cols if col in df.columns]
+
+def _autoformat_columns(writer: pd.ExcelWriter, sheet_name: str, df: pd.DataFrame, numeric_columns: list = None):
+    worksheet = writer.sheets[sheet_name]
+    workbook = writer.book
+    number_format = workbook.add_format({'num_format': '0.0000'})
+    
+    for idx, col in enumerate(df.columns):
+        series = df[col]
+        max_len = max((series.astype(str).map(len).max(), len(str(series.name)))) + 2
+        format_to_use = number_format if numeric_columns and col in numeric_columns else None
+        worksheet.set_column(idx, idx, max_len, format_to_use)
+
+def _sanitize_sheet_name(name: str) -> str:
+    invalid_chars = re.compile(r'[\\*?:/\[\]]')
+    sanitized = invalid_chars.sub("", name)
+    return sanitized[:31]
+
+--- END OF FILE ---
+
+--- START OF FILE assets/help.txt ---
+
+Mezőgazdasági Adatkinyerő v7.3 - Súgó
+
+-----------------------------------------
+A PROGRAM CÉLJA
+-----------------------------------------
+
+Ez az alkalmazás a Magyar Államkincstár (MÁK) által kiadott, Egységes Kérelem
+(EK) PDF dokumentumok automatizált feldolgozására szolgál. Célja, hogy
+a több tíz vagy akár több száz oldalas dokumentumokból gyorsan és
+hibamentesen kinyerje a legfontosabb táblázatos adatokat, majd azokat
+strukturált, könnyen kezelhető Excel formátumba mentse.
+
+A program képes egyszerre több PDF fájl kötegelt feldolgozására is.
+
+-----------------------------------------
+A FELHASZNÁLÓI FELÜLET
+-----------------------------------------
+
+Az alkalmazás három fő részből áll:
+
+1. FELSŐ SZEKCIÓ: Bemenet és kimeneti beállítások
+   - Bemeneti Fájlok: Itt adhatja meg a feldolgozandó PDF fájlokat.
+   - Kimeneti Opciók: Itt állíthatja be, hogyan szeretné megkapni az eredményeket.
+
+2. KÖZÉPSŐ SZEKCIÓ: Eredmények megtekintése
+   - Egy füles elrendezésű felület, ahol a feldolgozás után ellenőrizheti
+     a kinyert adatokat, mielőtt exportálná őket.
+
+3. ALSÓ SZEKCIÓ: Vezérlőgombok és státuszsor
+   - Itt indíthatja a műveleteket, és itt kap visszajelzést a program
+     aktuális állapotáról.
+
+-----------------------------------------
+HASZNÁLAT LÉPÉSRŐL LÉPÉSRE
+-----------------------------------------
+
+1. FÁJLOK HOZZÁADÁSA
+   - Kattintson a "Hozzáadás..." gombra a fájlok tallózásához.
+   - VAGY: Egyszerűen húzza rá a PDF fájlokat a nagy fehér listára (Drag & Drop).
+   - A listához tetszőleges számú fájlt adhat hozzá.
+
+2. FELDOLGOZÁS
+   - Kattintson a kék "Feldolgozás" gombra.
+   - A program végigmegy a listán szereplő összes PDF-en, és kinyeri belőlük az adatokat.
+   - A folyamatot az alsó státuszsorban követheti:
+     - A futó csík jelzi, hogy a program dolgozik.
+     - A szöveges üzenet mutatja, éppen melyik fájl melyik adatrészét dolgozza fel.
+
+3. EREDMÉNYEK ELLENŐRZÉSE
+   - A feldolgozás végeztével a "Megjelenített fájl" legördülő menüből
+     válassza ki azt a PDF-et, amelynek az eredményeit látni szeretné.
+   - A fülekre ("Fővetés", "Másodvetés", stb.) kattintva válthat a kinyert
+     adattáblázatok között.
+
+4. EXPORTÁLÁS
+   - A "Kimeneti Opciók" részen válassza ki a kívánt mentési módot:
+     a) Minden PDF-hez külön Excel fájl: Minden PDF mellé létrehoz egy
+        saját, 5 munkalapos Excel fájlt (pl. `fajlnev_kivonat.xlsx`).
+     b) Összes adat egy új Excel fájlba: A program létrehoz egyetlen nagy
+        Excel fájlt, amelyben minden feldolgozott PDF adatai külön-külön
+        munkalapokon szerepelnek (pl. `fajlnev1_Fővetés`, `fajlnev2_Fővetés`, stb.).
+
+   - Kattintson az "Exportálás" gombra. Ha az "Összes adat..." opciót
+     választotta, a program fel fogja ajánlani a mentési hely és a fájlnév
+     megadását.
+
+-----------------------------------------
+KINYERT ADATOK TÍPUSAI
+-----------------------------------------
+
+- Fővetés: A "7 - Táblaadatok" szekció részletes adatai.
+- Másodvetés / Agrotechnika: A "8 - Másodvetés/Agrotechnika" szekció adatai.
+- Jogcímek: Összesítés a támogatási jogcímekről.
+- Hasznosítás: Összesítés a növénykultúrákról.
+- Blokkok: Összesítés a blokkhasználatról.
+
+-----------------------------------------
+Készült Péter ötletei alapján a Gemini AI segítségével | v7.3
+
+--- END OF FILE ---
+

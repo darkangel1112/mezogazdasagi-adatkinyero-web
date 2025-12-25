@@ -1,0 +1,90 @@
+Mezőgazdasági Adatkinyerő v7.5 - Súgó
+
+-----------------------------------------
+A PROGRAM CÉLJA
+-----------------------------------------
+
+Ez az alkalmazás a Magyar Államkincstár (MÁK) által kiadott, Egységes Kérelem
+(EK) PDF dokumentumok automatizált feldolgozására szolgál. Célja, hogy
+a több tíz vagy akár több száz oldalas dokumentumokból gyorsan és
+hibamentesen kinyerje a legfontosabb táblázatos adatokat, majd azokat
+strukturált, könnyen kezelhető Excel formátumba mentse, valamint egy
+komplex, vezetői összefoglalót készítsen a kinyert adatokból.
+
+A program képes egyszerre több PDF fájl kötegelt feldolgozására is.
+
+-----------------------------------------
+A FELHASZNÁLÓI FELÜLET
+-----------------------------------------
+
+Az alkalmazás indításkor egy rövid betöltő képernyőt jelenít meg, amíg a
+főablak felépül. A főablak három fő részből áll:
+
+1. FELSŐ SZEKCIÓ: Bemenet és kimeneti beállítások
+   - Bemeneti Fájlok: Itt adhatja meg a feldolgozandó PDF fájlokat. Az elrendezés
+     úgy lett kialakítva, hogy a hosszú fájlnevek is jól látszódjanak.
+   - Kimeneti Opciók: Itt állíthatja be, hogyan szeretné megkapni az eredményeket.
+
+2. KÖZÉPSŐ SZEKCIÓ: Eredmények megtekintése
+   - Egy füles elrendezésű felület, ahol a feldolgozás után ellenőrizheti az
+     adatokat. Első fülként egy 'Összefoglaló' riporttal, ahol a legfontosabb,
+     feldolgozott információk láthatók.
+
+3. ALSÓ SZEKCIÓ: Vezérlőgombok és státuszsor
+   - Itt indíthatja a műveleteket, és itt kap visszajelzést a program
+     aktuális állapotáról.
+
+-----------------------------------------
+HASZNÁLAT LÉPÉSRŐL LÉPÉSRE
+-----------------------------------------
+
+1. FÁJLOK HOZZÁADÁSA
+   - Kattintson a "Hozzáadás..." gombra a fájlok tallózásához.
+   - VAGY: Egyszerűen húzza rá a PDF fájlokat a nagy fehér listára (Drag & Drop).
+   - A listához tetszőleges számú fájlt adhat hozzá.
+
+2. FELDOLGOZÁS
+   - Kattintson a kék "Feldolgozás" gombra.
+   - A program végigmegy a listán szereplő összes PDF-en, és kinyeri belőlük az adatokat.
+   - A folyamatot az alsó státuszsorban követheti:
+     - A futó csík jelzi, hogy a program dolgozik.
+     - A szöveges üzenet mutatja, éppen melyik fájl melyik adatrészét dolgozza fel.
+
+3. EREDMÉNYEK ELLENŐRZÉSE
+   - A feldolgozás végeztével az "Összefoglaló" fülön azonnal láthatja a
+     legfontosabb elemzéseket: a kérelmező adatait, a területek összesítését,
+     valamint a kiválasztott támogatási igényeket.
+   - A többi fülre ("Fővetés", "Másodvetés", stb.) kattintva továbbra is
+     ellenőrizheti a nyers, kinyert adattáblázatokat.
+
+4. EXPORTÁLÁS
+   - A "Kimeneti Opciók" részen válassza ki a kívánt mentési módot:
+     a) Minden PDF-hez külön Excel fájl: Minden PDF mellé létrehoz egy
+        saját, 6 munkalapos Excel fájlt (pl. `fajlnev_kivonat.xlsx`). Az első
+        munkalap a formázott "Összefoglaló" riport lesz.
+     b) Összes adat egy új Excel fájlba: A program létrehoz egyetlen nagy
+        Excel fájlt, amelyben minden PDF adatai külön munkalapokon
+        szerepelnek (pl. `fajlnev1_Összefoglaló`, `fajlnev1_Fővetés`, stb.).
+
+   - Kattintson az "Exportálás" gombra. A program fel fogja ajánlani a mentési
+     hely és a fájlnév megadását.
+
+-----------------------------------------
+KINYERT ADATOK TÍPUSAI
+-----------------------------------------
+
+- Összefoglaló és Elemzés: Egyedi riport, amely tartalmazza:
+  - Kérelmező adatai (Név, MÁK azonosító)
+  - Terület kimutatás (a fő- és másodvetések számított területeivel, önellenőrzési céllal)
+  - Kiegészítő statisztikák (nitrátérzékeny területek, 5 legnagyobb tábla összege)
+  - Elvégzett agrotechnikai műveletek listája
+  - Igényelt támogatási jogcímek listája
+
+- Fővetés: A "7 - Táblaadatok" szekció részletes adatai.
+- Másodvetés / Agrotechnika: A "8 - Másodvetés/Agrotechnika" szekció adatai.
+- Jogcímek: Összesítés a támogatási jogcímekről.
+- Hasznosítás: Összesítés a növénykultúrákról.
+- Blokkok: Összesítés a blokkhasználatról.
+
+-----------------------------------------
+Készült Péter ötletei alapján a Gemini AI segítségével | v7.5
