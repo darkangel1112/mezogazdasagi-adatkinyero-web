@@ -257,6 +257,11 @@ def process_single_pdf(pdf_path, filename):
         
         analysis_data = adatfeldolgozas_parser.create_analysis_report(processed_data, pdf_path)
         
+        # Add tables_count to extra_stats
+        if 'extra_stats' not in analysis_data:
+            analysis_data['extra_stats'] = {}
+        analysis_data['extra_stats']['tables_count'] = len(fovetes_df)
+        
         return {
             "success": True,
             "filename": filename,
@@ -288,12 +293,6 @@ def generate_zip_export(results_dict):
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_excel:
                     excel_tmp_path = tmp_excel.name
                 
-                # Add tables_count to extra_stats
-                analysis_data_for_zip = result['analysis_data'].copy()
-                if 'extra_stats' not in analysis_data_for_zip:
-                    analysis_data_for_zip['extra_stats'] = {}
-                analysis_data_for_zip['extra_stats']['tables_count'] = len(result['fovetes_df'])
-                
                 data_to_export = {
                     "Fővetés": result['fovetes_df'],
                     "Másodvetés": result['masodvetes_list'],
@@ -302,7 +301,7 @@ def generate_zip_export(results_dict):
                     "Hasznosítás_total": result['summary_dict'].get('hasznositas_total', 0.0),
                     "Blokkok": result['summary_dict'].get('blokkok', []),
                     "Blokkok_total": result['summary_dict'].get('blokkok_total', 0.0),
-                    "Adatfeldolgozás": analysis_data_for_zip
+                    "Adatfeldolgozás": result['analysis_data']
                 }
                 
                 excel_exporter.export_to_excel(
@@ -628,12 +627,6 @@ if st.session_state.processed_results and 'selected_file' in locals() and select
                     excel_tmp = tmp.name
                 
                 try:
-                    # Add tables_count to extra_stats for Excel export
-                    analysis_data_with_count = analysis_data.copy()
-                    if 'extra_stats' not in analysis_data_with_count:
-                        analysis_data_with_count['extra_stats'] = {}
-                    analysis_data_with_count['extra_stats']['tables_count'] = len(fovetes_df)
-                    
                     data_to_export = {
                         "Fővetés": fovetes_df,
                         "Másodvetés": masodvetes_list,
@@ -642,7 +635,7 @@ if st.session_state.processed_results and 'selected_file' in locals() and select
                         "Hasznosítás_total": summary_dict.get('hasznositas_total', 0.0),
                         "Blokkok": summary_dict.get('blokkok', []),
                         "Blokkok_total": summary_dict.get('blokkok_total', 0.0),
-                        "Adatfeldolgozás": analysis_data_with_count
+                        "Adatfeldolgozás": analysis_data
                     }
                     
                     excel_exporter.export_to_excel(
