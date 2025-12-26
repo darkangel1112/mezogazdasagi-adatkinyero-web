@@ -288,6 +288,12 @@ def generate_zip_export(results_dict):
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_excel:
                     excel_tmp_path = tmp_excel.name
                 
+                # Add tables_count to extra_stats
+                analysis_data_for_zip = result['analysis_data'].copy()
+                if 'extra_stats' not in analysis_data_for_zip:
+                    analysis_data_for_zip['extra_stats'] = {}
+                analysis_data_for_zip['extra_stats']['tables_count'] = len(result['fovetes_df'])
+                
                 data_to_export = {
                     "Fővetés": result['fovetes_df'],
                     "Másodvetés": result['masodvetes_list'],
@@ -296,7 +302,7 @@ def generate_zip_export(results_dict):
                     "Hasznosítás_total": result['summary_dict'].get('hasznositas_total', 0.0),
                     "Blokkok": result['summary_dict'].get('blokkok', []),
                     "Blokkok_total": result['summary_dict'].get('blokkok_total', 0.0),
-                    "Adatfeldolgozás": result['analysis_data']
+                    "Adatfeldolgozás": analysis_data_for_zip
                 }
                 
                 excel_exporter.export_to_excel(
@@ -341,6 +347,10 @@ st.set_page_config(
 if 'processed_results' not in st.session_state:
     st.session_state.processed_results = {}
 
+# Hard Reset: Dynamic uploader key
+if 'uploader_key' not in st.session_state:
+    st.session_state.uploader_key = 0
+
 # CSS
 st.markdown("""
     <style>
@@ -374,6 +384,12 @@ st.markdown("""
         background-color: #2b313e !important;
         color: white !important;
         border: 1px solid #4CAF50 !important;
+    }
+    
+    /* Selectbox - disable search typing */
+    div[data-baseweb="select"] input {
+        caret-color: transparent !important;
+        cursor: pointer !important;
     }
     
     div[data-baseweb="menu"] {
@@ -428,15 +444,17 @@ with st.sidebar:
                     'applicant_info', {}).get('name', x) 
                     if st.session_state.processed_results[x].get('success') 
                     else f"❌ {x}",
-                label_visibility="collapsed"
+                label_visibility="collapsed",
+                help="Válasszon a feldolgozott kérelmek közül (nem kereshető)"
             )
         else:
             selected_file = None
         
         st.markdown("---")
         
-        if st.button("🗑️ Összes Törlése", use_container_width=True):
+        if st.button("🗑️ Összes Törlése (Hard Reset)", use_container_width=True):
             st.session_state.processed_results = {}
+            st.session_state.uploader_key += 1  # Reset file uploader
             st.rerun()
     else:
         st.info("📤 Töltsön fel PDF fájlokat!")
@@ -477,7 +495,8 @@ with st.form("upload_form", clear_on_submit=False):
         "Húzza ide a PDF fájlokat vagy kattintson a tallózáshoz",
         type=['pdf'],
         accept_multiple_files=True,
-        help="Egyszerre több fájl is feltölthető tömeges feldolgozáshoz"
+        help="Egyszerre több fájl is feltölthető tömeges feldolgozáshoz",
+        key=f"uploader_{st.session_state.uploader_key}"  # Dynamic key for hard reset
     )
     
     submitted = st.form_submit_button("🚀 Elemzés Indítása", type="primary", use_container_width=True)
@@ -609,6 +628,12 @@ if st.session_state.processed_results and 'selected_file' in locals() and select
                     excel_tmp = tmp.name
                 
                 try:
+                    # Add tables_count to extra_stats for Excel export
+                    analysis_data_with_count = analysis_data.copy()
+                    if 'extra_stats' not in analysis_data_with_count:
+                        analysis_data_with_count['extra_stats'] = {}
+                    analysis_data_with_count['extra_stats']['tables_count'] = len(fovetes_df)
+                    
                     data_to_export = {
                         "Fővetés": fovetes_df,
                         "Másodvetés": masodvetes_list,
@@ -617,7 +642,7 @@ if st.session_state.processed_results and 'selected_file' in locals() and select
                         "Hasznosítás_total": summary_dict.get('hasznositas_total', 0.0),
                         "Blokkok": summary_dict.get('blokkok', []),
                         "Blokkok_total": summary_dict.get('blokkok_total', 0.0),
-                        "Adatfeldolgozás": analysis_data
+                        "Adatfeldolgozás": analysis_data_with_count
                     }
                     
                     excel_exporter.export_to_excel(

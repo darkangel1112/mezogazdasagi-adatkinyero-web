@@ -54,6 +54,11 @@ def _write_analysis_report_to_writer(writer: pd.ExcelWriter, data_dict: dict, sh
     worksheet.write(row_idx, 0, "5 legnagyobb tábla területe (összesen):", bold_format)
     worksheet.write_number(row_idx, 1, stats.get("top_5_plots_sum", 0), workbook.add_format({'num_format': '0.0000'}))
     
+    # ÚJ: Táblák száma
+    row_idx += 1
+    worksheet.write(row_idx, 0, "Táblák száma (db):", bold_format)
+    worksheet.write_number(row_idx, 1, stats.get("tables_count", 0), workbook.add_format({'num_format': '0'}))
+    
     row_idx += 2
     worksheet.write(row_idx, 0, "Elvégzett agrotechnikai műveletek:", bold_format)
     row_idx += 1
