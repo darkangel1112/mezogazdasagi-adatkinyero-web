@@ -501,6 +501,7 @@ with st.form("upload_form", clear_on_submit=False):
     submitted = st.form_submit_button("🚀 Elemzés Indítása", type="primary", use_container_width=True)
 
 st.warning("⚠️ **Adatvédelem:** A feltöltött fájlok nem kerülnek mentésre a szerveren. Az oldal bezárásával az adatok elvesznek.")
+st.warning("⚠️**Figyelem:** A program a regex illesztés miatt tévedhet, minden alkalommal ellenőrizze az eredményeket!")
 
 # ============================================================================
 # FELDOLGOZÁS - CSAK HA A FORM EL LETT KÜLDVE!
