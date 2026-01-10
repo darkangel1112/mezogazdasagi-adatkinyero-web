@@ -17,7 +17,7 @@ from streamlit_lottie import st_lottie
 
 # Saját modulok
 from dataprocess import fovetes_parser, masodvetes_parser, osszesitok_parser, adatfeldolgozas_parser
-from dataexport import excel_exporter
+from dataexport import excel_exporter, markdown_exporter
 
 
 # ============================================================================
@@ -276,7 +276,7 @@ def process_single_pdf(pdf_path, filename):
 
 
 def generate_zip_export(results_dict):
-    """ZIP generálás Excel + PDF tartalommal"""
+    """ZIP generálás Excel + PDF + Markdown tartalommal"""
     zip_buffer = BytesIO()
     
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
@@ -284,9 +284,8 @@ def generate_zip_export(results_dict):
             if not result.get('success', False):
                 continue
             
-            applicant_name = result['analysis_data'].get('applicant_info', {}).get('name', 'Ismeretlen')
-            safe_name = applicant_name.replace(' ', '_').replace('/', '_')
-            timestamp = datetime.now().strftime('%Y')
+            # Fájlnév a bemeneti PDF-ből
+            base_filename = result['filename'].rsplit('.', 1)[0] if '.' in result['filename'] else result['filename']
             
             # EXCEL
             try:
@@ -313,20 +312,32 @@ def generate_zip_export(results_dict):
                 )
                 
                 with open(excel_tmp_path, 'rb') as f:
-                    zip_file.writestr(f"{safe_name}_{timestamp}.xlsx", f.read())
+                    zip_file.writestr(f"{base_filename}.xlsx", f.read())
                 os.unlink(excel_tmp_path)
             except Exception as e:
-                st.warning(f"Excel hiba ({safe_name}): {e}")
+                st.warning(f"Excel hiba ({base_filename}): {e}")
             
             # PDF
             try:
+                applicant_name = result['analysis_data'].get('applicant_info', {}).get('name', 'Ismeretlen')
                 pdf_bytes = generate_pdf_report(
                     result['analysis_data'], result['fovetes_df'],
                     result['masodvetes_list'], result['summary_dict'], applicant_name
                 )
-                zip_file.writestr(f"{safe_name}_{timestamp}.pdf", pdf_bytes)
+                zip_file.writestr(f"{base_filename}.pdf", pdf_bytes)
             except Exception as e:
-                st.warning(f"PDF hiba ({safe_name}): {e}")
+                st.warning(f"PDF hiba ({base_filename}): {e}")
+            
+            # MARKDOWN
+            try:
+                applicant_name = result['analysis_data'].get('applicant_info', {}).get('name', 'Ismeretlen')
+                markdown_content = markdown_exporter.generate_markdown_report(
+                    result['analysis_data'], result['fovetes_df'],
+                    result['masodvetes_list'], result['summary_dict'], applicant_name
+                )
+                zip_file.writestr(f"{base_filename}.md", markdown_content.encode('utf-8'))
+            except Exception as e:
+                st.warning(f"Markdown hiba ({base_filename}): {e}")
     
     zip_buffer.seek(0)
     return zip_buffer
@@ -422,7 +433,7 @@ with st.sidebar:
         zip_buffer = generate_zip_export(st.session_state.processed_results)
         
         st.download_button(
-            label="🗜️ ZIP Letöltése (Excel + PDF)",
+            label="🗜️ ZIP Letöltése (Excel + PDF + Markdown)",
             data=zip_buffer,
             file_name=f"Mezogazdasagi_Elemzesek_{datetime.now().strftime('%Y%m%d_%H%M')}.zip",
             mime="application/zip",
@@ -498,7 +509,7 @@ with st.form("upload_form", clear_on_submit=False):
         key=f"uploader_{st.session_state.uploader_key}"  # Dynamic key for hard reset
     )
     
-    submitted = st.form_submit_button("🚀 Elemzés Indítása", type="primary", use_container_width=True)
+    submitted = st.form_submit_button("🌾 Elemzés Indítása", type="primary", use_container_width=True)
 
 st.warning("⚠️ **Adatvédelem:** A feltöltött fájlok nem kerülnek mentésre a szerveren. Az oldal bezárásával az adatok elvesznek.")
 st.warning("⚠️**Figyelem:** A program a regex illesztés miatt tévedhet, minden alkalommal ellenőrizze az eredményeket!")
@@ -620,7 +631,10 @@ if st.session_state.processed_results and 'selected_file' in locals() and select
                                use_container_width=True, hide_index=True)
         
         with tab5:
-            col1, col2 = st.columns(2)
+            col1, col2, col3 = st.columns(3)
+            
+            # Fájlnév a bemeneti PDF-ből
+            base_filename = result['filename'].rsplit('.', 1)[0] if '.' in result['filename'] else result['filename']
             
             with col1:
                 st.markdown("### 📊 Excel Export")
@@ -651,7 +665,7 @@ if st.session_state.processed_results and 'selected_file' in locals() and select
                         st.download_button(
                             "⬇️ Excel Letöltés",
                             data=f.read(),
-                            file_name=f"{applicant.get('name', 'adat').replace(' ', '_')}.xlsx",
+                            file_name=f"{base_filename}.xlsx",
                             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                             use_container_width=True
                         )
@@ -669,12 +683,29 @@ if st.session_state.processed_results and 'selected_file' in locals() and select
                     st.download_button(
                         "⬇️ PDF Letöltés",
                         data=pdf_bytes,
-                        file_name=f"{applicant.get('name', 'adat').replace(' ', '_')}.pdf",
+                        file_name=f"{base_filename}.pdf",
                         mime="application/pdf",
                         use_container_width=True
                     )
                 except Exception as e:
                     st.error(f"PDF hiba: {e}")
+            
+            with col3:
+                st.markdown("### 📝 Markdown Export")
+                try:
+                    markdown_content = markdown_exporter.generate_markdown_report(
+                        analysis_data, fovetes_df, masodvetes_list,
+                        summary_dict, applicant.get('name', 'adat')
+                    )
+                    st.download_button(
+                        "⬇️ Markdown Letöltés",
+                        data=markdown_content.encode('utf-8'),
+                        file_name=f"{base_filename}.md",
+                        mime="text/markdown",
+                        use_container_width=True
+                    )
+                except Exception as e:
+                    st.error(f"Markdown hiba: {e}")
     else:
         st.error(f"❌ Hiba: {result.get('error', 'Ismeretlen hiba')}")
 
