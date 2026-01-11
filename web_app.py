@@ -14,6 +14,7 @@ from io import BytesIO
 from datetime import datetime
 from fpdf import FPDF
 from streamlit_lottie import st_lottie
+from unidecode import unidecode  # ASCII konverzió magyar karakterekhez
 
 # Saját modulok
 from dataprocess import fovetes_parser, masodvetes_parser, osszesitok_parser, adatfeldolgozas_parser
@@ -50,22 +51,9 @@ def generate_pdf_report(analysis_data, fovetes_df, masodvetes_list, summary_dict
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=10)
     
-    # JAVÍTOTT Font betöltés - ROBUSZTUS DUPLA REGISZTRÁCIÓ
-    font_path = os.path.join("assets", "Roboto-Regular.ttf")
-    use_custom_font = False
-    
-    if os.path.exists(font_path):
-        try:
-            # KRITIKUS: Mindkét stílus regisztrációja KÖTELEZŐ!
-            pdf.add_font('Roboto', '', font_path, uni=True)    # Regular
-            pdf.add_font('Roboto', 'B', font_path, uni=True)   # Bold (ugyanaz!)
-            use_custom_font = True
-        except Exception as e:
-            st.warning(f"Font betöltési hiba: {e}. Arial fontot használunk.")
-            use_custom_font = False
-    else:
-        st.warning("⚠️ Roboto font nem található. Arial fontot használunk.")
-        use_custom_font = False
+    # EGYSZERŰ MEGOLDÁS: Arial font ASCII szöveggel (unidecode)
+    # Nem kell külön Unicode font, a magyar karakterek ASCII-re konvertálódnak
+    use_custom_font = False  # Mindig Arial-t használunk
     
     # ===== 1. FEDLAP (Portrait) =====
     _add_cover_page(pdf, analysis_data.get('applicant_info', {}), applicant_name, use_custom_font)
@@ -97,7 +85,7 @@ def generate_pdf_report(analysis_data, fovetes_df, masodvetes_list, summary_dict
         hasznositas_df = pd.DataFrame(hasznositas_data, columns=['Kod', 'Megnevezes', 'Terulet (ha)'])
         _add_dataframe_table(pdf, hasznositas_df, "Hasznositasi Adatok", use_custom_font)
         
-        pdf.set_font('Roboto' if use_custom_font else 'Arial', 'B', 9)
+        pdf.set_font('DejaVu' if use_custom_font else 'Arial', 'B', 9)
         pdf.cell(0, 8, f"Osszesen: {summary_dict.get('hasznositas_total', 0):.4f} ha", ln=True)
     
     # ===== 7. BLOKKHASZNÁLAT (Landscape) =====
@@ -106,7 +94,7 @@ def generate_pdf_report(analysis_data, fovetes_df, masodvetes_list, summary_dict
         blokk_df = pd.DataFrame(blokk_data, columns=['Blokk azonosito', 'Terulet (ha)'])
         _add_dataframe_table(pdf, blokk_df, "Blokkhasználat", use_custom_font)
         
-        pdf.set_font('Roboto' if use_custom_font else 'Arial', 'B', 9)
+        pdf.set_font('DejaVu' if use_custom_font else 'Arial', 'B', 9)
         pdf.cell(0, 8, f"Osszesen: {summary_dict.get('blokkok_total', 0):.4f} ha", ln=True)
     
     # ===== 8. STATISZTIKÁK (Portrait) =====
@@ -134,34 +122,90 @@ def _add_cover_page(pdf, applicant_info, applicant_name, use_custom):
     else:
         pdf.ln(10)
     
-    pdf.set_font('Roboto' if use_custom else 'Arial', 'B', 20)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', 'B', 20)
     pdf.set_text_color(46, 125, 50)
-    pdf.cell(0, 15, 'Egysеges Kerelem Elemzes', align='C', ln=True)
+    pdf.cell(0, 15, unidecode('Egységes Kérelem Elemzés'), align='C', ln=True)
     pdf.set_text_color(0, 0, 0)
     pdf.ln(10)
     
-    pdf.set_font('Roboto' if use_custom else 'Arial', '', 12)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', '', 12)
     pdf.cell(60, 8, 'Nev:', border=0)
-    pdf.cell(0, 8, applicant_info.get('name', 'N/A'), border=0, ln=True)
+    pdf.cell(0, 8, unidecode(applicant_info.get('name', 'N/A')), border=0, ln=True)
     pdf.cell(60, 8, 'Azonosito:', border=0)
-    pdf.cell(0, 8, applicant_info.get('support_id', 'N/A'), border=0, ln=True)
+    pdf.cell(0, 8, unidecode(str(applicant_info.get('support_id', 'N/A'))), border=0, ln=True)
     pdf.ln(10)
     
-    pdf.set_font('Roboto' if use_custom else 'Arial', '', 9)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', '', 9)
     pdf.cell(0, 8, f'Generalva: {datetime.now().strftime("%Y.%m.%d %H:%M")}', align='C', ln=True)
 
 
+def _calculate_column_widths(df, pdf, font_size, available_width=277):
+    """
+    Intelligens oszlopszélesség kalkulátor - tartalom alapján
+    
+    Args:
+        df: DataFrame
+        pdf: FPDF objektum
+        font_size: Betűméret
+        available_width: Rendelkezésre álló szélesség (mm)
+    
+    Returns:
+        List[float]: Oszlopszélességek mm-ben
+    """
+    pdf.set_font('Arial', '', font_size)
+    
+    col_widths = []
+    
+    for col in df.columns:
+        # Oszlopnév szélessége
+        col_name = str(col)[:25] if len(str(col)) > 25 else str(col)
+        col_name = unidecode(col_name)
+        header_width = pdf.get_string_width(col_name) + 4  # +4mm padding
+        
+        # Max tartalom szélessége (első 100 sor alapján)
+        max_content_width = header_width
+        sample_size = min(100, len(df))
+        
+        for val in df[col].head(sample_size):
+            if pd.notna(val):
+                val_str = str(val)[:50]  # Max 50 karakter (elég hosszú szövegek)
+                val_str = unidecode(val_str)
+                content_width = pdf.get_string_width(val_str) + 4
+                max_content_width = max(max_content_width, content_width)
+        
+        col_widths.append(max_content_width)
+    
+    # Normalizálás: korlátok alkalmazása
+    MIN_WIDTH = 12  # mm
+    MAX_WIDTH = 70  # mm
+    
+    col_widths = [max(MIN_WIDTH, min(MAX_WIDTH, w)) for w in col_widths]
+    
+    # Arányosítás a rendelkezésre álló szélességhez
+    total_width = sum(col_widths)
+    
+    if total_width > available_width:
+        # Lejjebb skálázás
+        scale = available_width / total_width
+        col_widths = [w * scale for w in col_widths]
+    elif total_width < available_width * 0.8:
+        # Kicsit szélesítés (80%-nál kisebb használat esetén)
+        scale = (available_width * 0.95) / total_width
+        col_widths = [min(MAX_WIDTH, w * scale) for w in col_widths]
+    
+    return col_widths
+
+
 def _add_dataframe_table(pdf, df, title, use_custom):
-    """Univerzális DataFrame → PDF táblázat konvertáló"""
+    """Univerzális DataFrame → PDF táblázat konvertáló INTELLIGENS OSZLOPSZÉLESSÉGGEL"""
     pdf.add_page(orientation='L')
     
-    pdf.set_font('Roboto' if use_custom else 'Arial', 'B', 12)
-    pdf.cell(0, 10, title, ln=True)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', 'B', 12)
+    pdf.cell(0, 10, unidecode(title), ln=True)
     pdf.ln(3)
     
     page_width = 297 - 20
     num_cols = len(df.columns)
-    col_width = page_width / num_cols if num_cols > 0 else 50
     
     if num_cols > 10:
         font_size = 7
@@ -170,70 +214,117 @@ def _add_dataframe_table(pdf, df, title, use_custom):
     else:
         font_size = 9
     
+    # INTELLIGENS OSZLOPSZÉLESSÉG KALKULÁCIÓ
+    col_widths = _calculate_column_widths(df, pdf, font_size, page_width)
+    
     # FEJLÉC
-    pdf.set_font('Roboto' if use_custom else 'Arial', 'B', font_size)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', 'B', font_size)
     pdf.set_fill_color(221, 235, 247)
     
-    for col in df.columns:
+    for idx, col in enumerate(df.columns):
         col_text = str(col)[:25] if len(str(col)) > 25 else str(col)
-        pdf.cell(col_width, 7, col_text, border=1, fill=True)
+        col_text = unidecode(col_text)  # ASCII konverzió
+        pdf.cell(col_widths[idx], 7, col_text, border=1, fill=True)
     pdf.ln()
     
     # ADATSOROK
-    pdf.set_font('Roboto' if use_custom else 'Arial', '', font_size)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', '', font_size)
     
     row_height = 6
     max_rows_per_page = 35
     
-    for idx, (_, row) in enumerate(df.iterrows()):
-        if idx > 0 and idx % max_rows_per_page == 0:
+    for row_idx, (_, row) in enumerate(df.iterrows()):
+        # 1. Először számoljuk ki a szükséges magasságot (max sorok száma)
+        max_lines = 1
+        row_data = [] # (text, width, num_lines) tuple-öket tárolunk
+        
+        pdf.set_font('DejaVu' if use_custom else 'Arial', '', font_size)
+        
+        for idx, col in enumerate(df.columns):
+            cell_value = str(row[col]) if pd.notna(row[col]) else ''
+            cell_value = unidecode(cell_value)
+            width = col_widths[idx]
+            
+            # Kiszámoljuk hány sor kell
+            # fpdf2 built-in split_only funkciója
+            try:
+                lines = pdf.multi_cell(w=width, h=row_height, txt=cell_value, split_only=True)
+                num_lines = len(lines)
+            except:
+                # Fallback ha a split_only nem működne a verzióban: becslés
+                txt_width = pdf.get_string_width(cell_value)
+                num_lines = int(txt_width // (width - 2)) + 1
+            
+            max_lines = max(max_lines, num_lines)
+            row_data.append((cell_value, width))
+
+        # Sor magasság
+        current_row_height = max_lines * row_height
+
+        # 2. Lapozás ellenőrzése
+        # Ha a köv sor nem fér ki, új lap
+        if pdf.get_y() + current_row_height > 190: # Landscape A4 kb 190mm hasznos magasság (marginokkal)
             pdf.add_page(orientation='L')
             
-            pdf.set_font('Roboto' if use_custom else 'Arial', 'B', font_size)
+            # Fejléc újra
+            pdf.set_font('DejaVu' if use_custom else 'Arial', 'B', font_size)
             pdf.set_fill_color(221, 235, 247)
-            for col in df.columns:
+            for idx, col in enumerate(df.columns):
                 col_text = str(col)[:25] if len(str(col)) > 25 else str(col)
-                pdf.cell(col_width, 7, col_text, border=1, fill=True)
+                col_text = unidecode(col_text)
+                pdf.cell(col_widths[idx], 7, col_text, border=1, fill=True)
             pdf.ln()
-            pdf.set_font('Roboto' if use_custom else 'Arial', '', font_size)
+            pdf.set_font('DejaVu' if use_custom else 'Arial', '', font_size)
+
+        # 3. Kiírás
+        # Trükk: MultiCell csak ír, a keretet Rect-tel húzzuk meg, hogy egyforma magas legyen
+        start_y = pdf.get_y()
+        curr_x = pdf.get_x()
         
-        for col in df.columns:
-            cell_value = str(row[col]) if pd.notna(row[col]) else ''
-            if len(cell_value) > 30:
-                cell_value = cell_value[:27] + '...'
-            pdf.cell(col_width, row_height, cell_value, border=1)
-        pdf.ln()
+        for i, (text, width) in enumerate(row_data):
+            # Szöveg kiírása (keret nélkül)
+            pdf.set_xy(curr_x, start_y)
+            pdf.multi_cell(width, row_height, text, border=0, align='L')
+            
+            # Keret rajzolása a teljes magasságra
+            pdf.rect(curr_x, start_y, width, current_row_height)
+            
+            # X léptetése
+            curr_x += width
+            
+        # Sor végén Y léptetése
+        pdf.set_y(start_y + current_row_height)
 
 
 def _add_statistics_page(pdf, extra_stats, fovetes_df, use_custom):
     """Statisztikák oldal"""
     pdf.add_page()
     
-    pdf.set_font('Roboto' if use_custom else 'Arial', 'B', 14)
-    pdf.cell(0, 10, 'Kiegeszito Statisztikak', ln=True)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', 'B', 14)
+    pdf.cell(0, 10, unidecode('Kiegészítő Statisztikák'), ln=True)
     pdf.ln(5)
     
-    pdf.set_font('Roboto' if use_custom else 'Arial', '', 11)
-    pdf.cell(0, 8, f"Tablak szama: {len(fovetes_df)}", ln=True)
-    pdf.cell(0, 8, f"Nitraterzeкeny terulet: {extra_stats.get('nitrate_sum', 0):.2f} ha", ln=True)
-    pdf.cell(0, 8, f"Top 5 tabla: {extra_stats.get('top_5_plots_sum', 0):.2f} ha", ln=True)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', '', 11)
+    pdf.cell(0, 8, unidecode(f"Táblák száma: {len(fovetes_df)}"), ln=True)
+    pdf.cell(0, 8, unidecode(f"Nitrátérzékeny terület: {extra_stats.get('nitrate_sum', 0):.2f} ha"), ln=True)
+    pdf.cell(0, 8, unidecode(f"Top 5 tábla: {extra_stats.get('top_5_plots_sum', 0):.2f} ha"), ln=True)
     pdf.ln(5)
     
-    pdf.set_font('Roboto' if use_custom else 'Arial', 'B', 11)
-    pdf.cell(0, 8, 'Agrotechnikai muveletek:', ln=True)
-    pdf.set_font('Roboto' if use_custom else 'Arial', '', 10)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', 'B', 11)
+    pdf.cell(0, 8, unidecode('Agrotechnikai műveletek:'), ln=True)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', '', 10)
     for tech in extra_stats.get('agrotechnics', [])[:10]:
         pdf.cell(10, 6, '-', border=0)
-        pdf.cell(0, 6, tech[:100], border=0, ln=True)
+        pdf.cell(0, 6, unidecode(tech[:100]), border=0, ln=True)
     
     pdf.ln(5)
     
-    pdf.set_font('Roboto' if use_custom else 'Arial', 'B', 11)
-    pdf.cell(0, 8, 'Tamogatasi igenyek:', ln=True)
-    pdf.set_font('Roboto' if use_custom else 'Arial', '', 10)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', 'B', 11)
+    pdf.cell(0, 8, unidecode('Támogatási igények:'), ln=True)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', '', 10)
     for req in extra_stats.get('support_requests', [])[:10]:
         pdf.cell(10, 6, '+', border=0)
-        pdf.cell(0, 6, req[:100], border=0, ln=True)
+        pdf.cell(0, 6, unidecode(req[:100]), border=0, ln=True)
 
 
 # ============================================================================

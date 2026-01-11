@@ -1,0 +1,14 @@
+{
+    "name": "mezogazdasagi-adatkinyero",
+    "version": "1.0.0",
+    "description": "Mezőgazdasági Adatkinyerő Webalkalmazás és HF Space verzió kezelő",
+    "scripts": {
+        "dev": "npx -y concurrently -k -n \"MAIN,HF-SPACE\" -c \"green,blue\" \"streamlit run web_app.py --server.port 8501\" \"streamlit run hf-space/app.py --server.port 8502\"",
+        "dev:hybrid": "cd hf-space && python main.py",
+        "api:test": "curl -X POST -H \"X-API-KEY: mezo-secret-2024\" -F \"file=@teszt_fajl.pdf\" http://localhost:7860/api/analyze"
+    },
+    "dependencies": {},
+    "devDependencies": {
+        "concurrently": "^8.2.2"
+    }
+}

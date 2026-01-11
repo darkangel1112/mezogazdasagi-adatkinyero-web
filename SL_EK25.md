@@ -2,7 +2,7 @@
 
 **Kérelmező neve:** Csizmadia Lászlóné  
 **Támogatási azonosító:** N/A  
-**Generálva:** 2026.01.10 11:33
+**Generálva:** 2026.01.10 17:35
 
 ## 📊 Összesítő Táblázat
 
@@ -212,6 +212,6 @@
 
 ---
 
-*Dokumentum generálva: 2026.01.10 11:33*  
+*Dokumentum generálva: 2026.01.10 17:35*  
 *Mezőgazdasági Adatkinyerő v7.5 - Automatizált Elemzés*  
 ⚠️ **Figyelem:** A program regex illesztést használ, az eredményeket mindig ellenőrizze!
