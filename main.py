@@ -1,96 +1,125 @@
-# Fájlnév: main.py
-import sys
+from fastapi import FastAPI, UploadFile, File, HTTPException, Header, Response
+from fastapi.responses import FileResponse
 import os
-import time
-import ctypes  # Új import
-from tkinterdnd2 import TkinterDnD
-import tkinter as tk
-from tkinter import font
-from PIL import Image, ImageTk
+import tempfile
+import zipfile
+from io import BytesIO
+import pandas as pd
+from unidecode import unidecode
 
-# JAVÍTÁS: DPI-Aware mód beállítása Windows rendszereken
-if os.name == 'nt':
+import traceback
+import sys
+
+# Saját modulok importálása
+from src.dataprocess import fovetes_parser, masodvetes_parser, osszesitok_parser, adatfeldolgozas_parser
+from src.dataexport import excel_exporter, markdown_exporter
+
+# Az app.py-ban lévő PDF generáló logika másolata (hogy ne függjön st-től)
+from fpdf import FPDF
+
+# Egyszerű API KEY - Élesben érdemes környezeti változóba tenni
+API_KEY = os.getenv("API_KEY", "mezo-secret-2024")
+
+app = FastAPI(title="Mezőgazdasági Adatkinyerő API", version="1.0.0")
+
+def verify_api_key(x_api_key: str = Header(None)):
+    if x_api_key != API_KEY:
+        raise HTTPException(status_code=403, detail="Érvénytelen API kulcs")
+    return True
+
+@app.get("/")
+async def root():
+    return {"message": "Mezőgazdasági Adatkinyerő API fut", "status": "online"}
+
+@app.post("/analyze")
+async def analyze_pdf(
+    file: UploadFile = File(...), 
+    x_api_key: str = Header(None)
+):
+    print(f"DEBUG: Bejövő kérés: {file.filename}", flush=True)
+    verify_api_key(x_api_key)
+    
+    if not file.filename.lower().endswith('.pdf'):
+        raise HTTPException(status_code=400, detail="Csak PDF fájlok fogadhatók")
+
+    # Ideiglenes fájlba mentés a feldolgozáshoz
+    with tempfile.NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+        content = await file.read()
+        tmp.write(content)
+        tmp_path = tmp.name
+    
+    print(f"DEBUG: Temp fájl mentve: {tmp_path}", flush=True)
+
     try:
-        # Próbáljuk beállítani a DPI-Awareness Context-et a modernebb Windows verziókhoz
-        ctypes.windll.shcore.SetProcessDpiAwarenessContext(ctypes.c_int(-4)) # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2
-    except (AttributeError, OSError):
-        # Ha ez nem működik, akkor a régebbi metódust használjuk
-        ctypes.windll.user32.SetProcessDPIAware()
-
-# A saját moduljaink importálása
-from GUI.gui_manager import GUIManager
-
-# JAVÍTÁS: Ez a blokk oldja meg a "can't find package tkdnd" hibát .exe-ben
-# Ennek a résznek a Tkinter ablak létrehozása ELŐTT kell lefutnia.
-if getattr(sys, 'frozen', False):
-    # Ha a program .exe-ként fut (PyInstaller csomagolta)
-    # Beállítjuk a környezeti változót, hogy a Tcl/Tk motor
-    # megtalálja a becsomagolt tkdnd könyvtárat.
-    tkdnd_path = os.path.join(sys._MEIPASS, 'tkdnd')
-    os.environ['TCLLIBPATH'] = tkdnd_path
-
-def resource_path(relative_path):
-    """
-    Ez a kulcsfontosságú függvény biztosítja, hogy a program mindig megtalálja
-    az 'assets' mappát, függetlenül a futtatási környezettől.
-    """
-    try:
-        base_path = sys._MEIPASS
-    except Exception:
-        base_path = os.path.abspath(".")
-    return os.path.join(base_path, relative_path)
-
-def create_splash_screen(root):
-    """Létrehoz és megjelenít egy betöltő képernyőt."""
-    splash = tk.Toplevel(root)
-    splash.overrideredirect(True)
-
-    try:
-        img = Image.open(resource_path("assets/logo.png"))
-        img.thumbnail((480, 480), Image.Resampling.LANCZOS)
-        splash_logo = ImageTk.PhotoImage(img)
-
-        splash_width = splash_logo.width()
-        splash_height = splash_logo.height() + 50
-
-        screen_width = splash.winfo_screenwidth()
-        screen_height = splash.winfo_screenheight()
-        x = (screen_width // 2) - (splash_width // 2)
-        y = (screen_height // 2) - (splash_height // 2)
-        splash.geometry(f'{splash_width}x{splash_height}+{x}+{y}')
-
-        tk.Label(splash, image=splash_logo, borderwidth=0).pack(pady=10)
-        splash.image = splash_logo
+        # PÉLDÁNYOSÍTOTT FELDOLGOZÁS (mint az app.py-ban)
+        # 1. Nyers adatok kinyerése
+        print("DEBUG: Fővetés adatok kinyerése...", flush=True)
+        fovetes_df = fovetes_parser.extract_fovetes_data(tmp_path)
+        print(f"DEBUG: Fővetés kész. Adatsorok: {len(fovetes_df)}", flush=True)
         
-        bold_font = font.Font(family="Segoe UI", size=12, weight="bold")
-        tk.Label(splash, text="Mezőgazdasági Adatkinyerő Program Indítása...", font=bold_font).pack()
+        print("DEBUG: Másodvetés adatok kinyerése...", flush=True)
+        masodvetes_list = masodvetes_parser.extract_masodvetes_data(tmp_path)
+        print(f"DEBUG: Másodvetés kész. Adatsorok: {len(masodvetes_list)}", flush=True)
+        
+        print("DEBUG: Összesítők kinyerése...", flush=True)
+        summary_dict = osszesitok_parser.extract_summary_data(tmp_path)
+        print("DEBUG: Összesítők kész.", flush=True)
+        
+        processed_data = {
+            "Fővetés": fovetes_df,
+            "Másodvetés": masodvetes_list,
+            "Hasznosítás": summary_dict.get('hasznositas', []),
+            "Jogcímek": summary_dict.get('jogcim', []),
+            "Blokkok": summary_dict.get('blokkok', [])
+        }
+        
+        # 2. Elemzés és összesítés (közös logika a GUI-val)
+        print("DEBUG: Elemzési riport készítése (create_analysis_report)...", flush=True)
+        analysis_data = adatfeldolgozas_parser.create_analysis_report(processed_data, tmp_path)
+        print("DEBUG: Elemzési riport kész.", flush=True)
+        
+        # HIBAJAVÍTÁS: tables_count hozzáadása manuálisan (mint az app.py-ban)
+        if 'extra_stats' not in analysis_data:
+            analysis_data['extra_stats'] = {}
+        analysis_data['extra_stats']['tables_count'] = len(fovetes_df)
+        
+        # Hiba ellenőrzés
+        if "error" in analysis_data:
+            print(f"DEBUG: Logikai hiba az elemzésben: {analysis_data['error']}", flush=True)
+            raise HTTPException(status_code=422, detail=analysis_data["error"])
+            
+        applicant_info = analysis_data.get('applicant_info', {})
+        summary_df = analysis_data.get('summary_df', pd.DataFrame())
+        extra_stats = analysis_data.get('extra_stats', {})
+
+        # 3. Exportok generálása
+        # Markdown
+        print("DEBUG: Markdown generálása...", flush=True)
+        markdown_content = markdown_exporter.generate_markdown_report(
+            analysis_data, fovetes_df, masodvetes_list, summary_dict, applicant_info.get('name', 'N/A')
+        )
+        print("DEBUG: Markdown kész.", flush=True)
+        
+        # Visszaküldünk egy JSON-t az adatokkal és a Markdown szöveggel
+        return {
+            "success": True,
+            "applicant": applicant_info.get('name', 'N/A'),
+            "markdown": markdown_content,
+            "summary": {
+                "total_area": summary_dict.get("hasznositas_total", 0.0),
+                "tables_count": analysis_data.get("extra_stats", {}).get("tables_count", 0)
+            }
+        }
+
     except Exception as e:
-        print(f"Hiba a betöltő kép betöltésekor: {e}")
-        splash_width, splash_height = 480, 530
-        splash.geometry(f'{splash_width}x{splash_height}')
-        tk.Label(splash, text="Logó nem található...").pack(pady=20)
-
-    splash.update()
-    return splash
-
-if __name__ == "__main__":
-    MIN_SPLASH_TIME_SEC = 3.0
-    start_time = time.time()
-
-    root = TkinterDnD.Tk()
-    root.withdraw()
-
-    splash = create_splash_screen(root)
-    
-    app = GUIManager(root, resource_path_func=resource_path)
-
-    duration = time.time() - start_time
-    delay_ms = int((MIN_SPLASH_TIME_SEC - duration) * 1000) if duration < MIN_SPLASH_TIME_SEC else 0
-
-    def show_main_window():
-        splash.destroy()
-        root.deiconify()
-
-    root.after(delay_ms, show_main_window)
-    
-    root.mainloop()
+        error_msg = f"Feldolgozási hiba: {str(e)}"
+        print(f"CRITICAL ERROR: {error_msg}", flush=True)
+        traceback.print_exc()
+        # Visszaadjuk a teljes traceback-et a válaszban a debuggoláshoz
+        raise HTTPException(status_code=500, detail=traceback.format_exc())
+    finally:
+        if os.path.exists(tmp_path):
+            try:
+                os.unlink(tmp_path)
+            except:
+                pass
