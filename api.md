@@ -23,7 +23,7 @@ Az elemzés indításához egy `POST` kérést kell küldeni a `/analyze` végpo
 ### Példa kérés (cURL):
 ```bash
 curl -X 'POST' \
-  'https://darkangel1112-mezogazdasagi-adatkinyero-web.hf.space/analyze' \
+  'https://darkangel1112-ekadatkinyero.hf.space/api/analyze' \
   -H 'accept: application/json' \
   -H 'X-API-Key: mezo-secret-2024' \
   -H 'Content-Type: multipart/form-data' \
@@ -58,7 +58,7 @@ Az API sikeres feldolgozás esetén egy JSON objektumot ad vissza.
 ```python
 import requests
 
-url = "https://darkangel1112-mezogazdasagi-adatkinyero-web.hf.space/analyze"
+url = "https://darkangel1112-ekadatkinyero.hf.space/api/analyze"
 headers = {"X-API-Key": "mezo-secret-2024"}
 files = {"file": open("kerelem.pdf", "rb")}
 
@@ -83,7 +83,7 @@ async function analyzePDF() {
     const form = new FormData();
     form.append('file', fs.createReadStream('kerelem.pdf'));
 
-    const response = await fetch('https://darkangel1112-mezogazdasagi-adatkinyero-web.hf.space/analyze', {
+    const response = await fetch('https://darkangel1112-ekadatkinyero.hf.space/api/analyze', {
         method: 'POST',
         headers: {
             'X-API-Key': 'mezo-secret-2024',
@@ -119,7 +119,7 @@ Az `/ek/json` végpont ugyanazt a PDF feldolgozást végzi, de **strukturált JS
 ### Példa kérés (cURL):
 ```bash
 curl -X 'POST' \
-  'https://darkangel1112-mezogazdasagi-adatkinyero-web.hf.space/ek/json' \
+  'https://darkangel1112-ekadatkinyero.hf.space/api/ek/json' \
   -H 'accept: application/json' \
   -H 'X-API-Key: mezo-secret-2024' \
   -H 'Content-Type: multipart/form-data' \
@@ -197,7 +197,7 @@ curl -X 'POST' \
 ```python
 import requests
 
-url = "https://darkangel1112-mezogazdasagi-adatkinyero-web.hf.space/ek/json"
+url = "https://darkangel1112-ekadatkinyero.hf.space/api/ek/json"
 headers = {"X-API-Key": "mezo-secret-2024"}
 files = {"file": open("kerelem.pdf", "rb")}
 
