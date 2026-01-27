@@ -25,6 +25,14 @@
 - **Helye:** `hf-space/src/api_app.py` - új `/ek/json` handler
 
 
+### [2026.01.27] - PDF Export Javítás (CRITICAL HOTFIX)
+- **Hiba:** `TypeError: unhashable type: 'slice'` a PDF generálásnál.
+- **Ok:** A `support_requests` (támogatási igények) adatszerkezete megváltozott (string -> dict), de a PDF generáló kód (`web_app.py`, `hf-space/app.py`) még a régi string formátumot várta.
+- **Javítás:** A PDF generáló ciklus mostantól ellenőrzi a típusát (`isinstance(req, dict)`), és helyesen kezeli mind az új (dict), mind a régi (string) formátumot.
+- **Érintett fájlok:** `web_app.py`, `hf-space/app.py`.
+- **API Hatás:** Az API kimenet nem változott, csak a PDF generálás javult.
+
+
 ### [Jövőbeli tervek]
 - PDF generáló logika integrálása a FastAPI-ba (`api_app.py`).
 - Base64 kódolt PDF visszaküldése az API-n keresztül.

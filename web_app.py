@@ -322,9 +322,16 @@ def _add_statistics_page(pdf, extra_stats, fovetes_df, use_custom):
     pdf.set_font('DejaVu' if use_custom else 'Arial', 'B', 11)
     pdf.cell(0, 8, unidecode('Támogatási igények:'), ln=True)
     pdf.set_font('DejaVu' if use_custom else 'Arial', '', 10)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', '', 10)
     for req in extra_stats.get('support_requests', [])[:10]:
+        # Handle both dictionary (new format) and string (old format)
+        if isinstance(req, dict):
+            req_name = req.get('name', '')
+        else:
+            req_name = str(req)
+            
         pdf.cell(10, 6, '+', border=0)
-        pdf.cell(0, 6, unidecode(req[:100]), border=0, ln=True)
+        pdf.cell(0, 6, unidecode(req_name[:100]), border=0, ln=True)
 
 
 # ============================================================================
