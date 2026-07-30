@@ -2,6 +2,15 @@
 
 ## Változtatások naplója
 
+### [2026.07.30] - HF Space Hibajavítás (4 hiba)
+
+- **Azonosító N/A javítás:** `adatfeldolgozas_parser.py`-ban a `mak_id` kulcs átnevezve `support_id`-re, hogy egységes legyen az összes fogyasztóval (PDF fedlap, HF Space UI, Markdown exporter). Az `excel_exporter.py`-ban is frissítve.
+- **Excel Hasznosítás/Blokkok nullás értékek javítás:** `excel_exporter.py` numerikus konverziójában kiegészítve ezres elválasztó szóköz eltávolításával (`.str.replace(' ', '')`), így az "1 013,9991" formátumú területértékek helyesen konvertálódnak számmá.
+- **`_kivonat` suffix:** `app.py`-ban a `base_filename` képzésénél (ZIP export és egyedi letöltés) hozzáadva a `"_kivonat"` utótag minden kimeneti fájlnevetípushoz (xlsx, pdf, md, json).
+- **Érintett fájlok:** `hf-space/src/dataprocess/adatfeldolgozas_parser.py`, `hf-space/src/dataexport/excel_exporter.py`, `hf-space/app.py`.
+
+
+
 ### [2026.01.11] - API Dokumentáció és MD fókusz
 - **API Leírás:** Létrehozva az `api.md` fájl, amely tartalmazza a `/analyze` végpont használatát, a hitelesítést és példakódokat Python/JS nyelven.
 - **Routing Javítás:** Nginx konfiguráció módosítása (`hf-space/nginx.conf`), hogy helyesen kezelje a `/api` prefixet (trailing slash hozzáadása), így a FastAPI helyesen kapja meg az útvonalakat.
@@ -33,6 +42,22 @@
 - **API Hatás:** Az API kimenet nem változott, csak a PDF generálás javult.
 
 
-### [Jövőbeli tervek]
+### [2026.02.09] - Excel Export Robusztusság Növelése (Bugfix)
+- **Hiba:** Hiányzó munkalapok az Excel exportban, csendes összeomlás a generálás során.
+- **Ok:** A szigorú oszlopnév-egyeztetés (`"Terület (ha)"` vs `"Terület"`) és a numerikus konverziós hibák miatti kivételkezelés hiánya leállította a munkalapok írását.
+- **Javítások:**
+  - **Sheet-level try-except:** Minden munkalap írása elkülönített hibakezelést kapott, így egy hiba nem rántja magával a többi fület.
+  - **Dinamikus oszlopillesztés:** A kód mostantól kulcsszavak alapján (pl. "terület", "méret", "ha") keresi a numerikus oszlopokat, nem pedig fix nevek alapján.
+  - **Safe Worksheet Write:** Bevezetve a `try-except` a cellák írásakor is, hogy az illegális karakterek vagy típusok ne akasszák meg a folyamatot.
+  - **Export_Log:** Új munkalap hozzáadva, amely felsorolja a generálás közben történt esetleges hibákat a "csendes összeomlás" elkerülése érdekében.
+- **Érintett fájlok:** `dataexport/excel_exporter.py`, `hf-space/src/dataexport/excel_exporter.py`.
+- **API Hatás:** Az API és a PDF generálás érintetlen maradt.
+
+### [2026.02.09] - Excel Esztétikai és Nyomtatási Optimalizálás
+- **Fejlesztés:** Teljes keret (grid lines) hozzáadása minden táblázathoz minden munkalapon.
+- **Dinamikus oszlopszélesség:** A `_autoformat_columns` továbbfejlesztve, hogy a fejlécet és az adatokat is figyelembe véve számolja ki a szélességet, minden munkalapon egységesen.
+- **Nyomtathatóság:** A keretek biztosítják, hogy az Excel fájlok nyomtatásban is átlátható táblázatként jelenjenek meg.
+- **Vizuális fix (Végtelen rács):** Megoldva az a probléma, hogy a rácsvonalak lefutottak az üres sorokra is. Mostantól csak az adattartomány kap keretet.
+- **Érintett fájlok:** `dataexport/excel_exporter.py`, `hf-space/src/dataexport/excel_exporter.py`.
 - PDF generáló logika integrálása a FastAPI-ba (`api_app.py`).
 - Base64 kódolt PDF visszaküldése az API-n keresztül.
