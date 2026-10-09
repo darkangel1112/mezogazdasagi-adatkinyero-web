@@ -54,6 +54,43 @@ def _merge_checkbox_key(result_key):
     return f"merge_checkbox_{result_key}"
 
 
+def _scroll_to_app_top():
+    """A dialog megnyitása előtt felgörgeti a Streamlit appot, ha szükséges."""
+    st.components.v1.html(
+        """
+        <script>
+        (() => {
+          const scrollTop = { top: 0, left: 0, behavior: "instant" };
+
+          // Az app saját, belső görgethető területei.
+          try {
+            const appWindow = window.parent;
+            const appDocument = appWindow.document;
+            for (const selector of [
+              '[data-testid="stMain"]',
+              '[data-testid="stSidebar"]',
+              '[data-testid="stSidebar"] > div'
+            ]) {
+              appDocument.querySelector(selector)?.scrollTo(scrollTop);
+            }
+            appDocument.scrollingElement?.scrollTo(scrollTop);
+            appWindow.scrollTo(scrollTop);
+          } catch (_) {}
+
+          // HF beágyazásnál megpróbáljuk a külső oldalt is felgörgetni.
+          // Ha a külső oldal tiltja a hozzáférést, az app saját görgetése fentebb megtörtént.
+          try {
+            const hostWindow = window.parent.parent;
+            if (hostWindow !== window.parent) hostWindow.scrollTo(scrollTop);
+          } catch (_) {}
+        })();
+        </script>
+        """,
+        height=0,
+        scrolling=False,
+    )
+
+
 def _prepare_uploaded_files():
     """Az új kérelem(ek) feldolgozása előtt érvényteleníti a régi összefűzést."""
     upload_key = f"uploader_{st.session_state.get('uploader_key', 0)}"
@@ -645,6 +682,7 @@ with st.sidebar:
         st.info("📤 Töltsön fel PDF fájlokat!")
 
 if open_merge_dialog:
+    _scroll_to_app_top()
     _show_merge_dialog()
 
 # ============================================================================
@@ -696,7 +734,7 @@ with st.form("upload_form", clear_on_submit=False):
 
 st.warning("⚠️ **Adatvédelem:** A feltöltött fájlok nem kerülnek mentésre a szerveren. Az oldal bezárásával az adatok elvesznek.")
 st.warning("⚠️**Figyelem:** A program a regex illesztés miatt tévedhet, minden alkalommal ellenőrizze az eredményeket!")
-st.warning("⚠️ **Az összefűzés funkció, jelenleg Béta üzemmódban van, fejlesztés alatt áll, az eredményeket mindenképpen ellenőrizni kell!**")
+st.warning("⚠️ **Az összefűzés funkció, jelenleg Béta üzemmódban van, fejlesztés alatt áll, az eredményeket mindenképpen ellenőrizni kell! A kommunikációs ablak az oldal tetején jelenik meg.**")
 
 # ============================================================================
 # FELDOLGOZÁS - CSAK HA A FORM EL LETT KÜLDVE!
