@@ -562,6 +562,11 @@ st.markdown("""
         color: white !important;
         font-weight: 600 !important;
     }
+
+    /* Keep dialog windows centered in the visible screen while the page is scrolled. */
+    [data-testid="stDialog"] > div {
+        align-items: center !important;
+    }
     </style>
 """, unsafe_allow_html=True)
 
