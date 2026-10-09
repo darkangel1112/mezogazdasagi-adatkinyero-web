@@ -142,7 +142,10 @@ def _write_sheets_to_writer(writer: pd.ExcelWriter, data_dict: dict, sheet_prefi
         if isinstance(data, pd.DataFrame):
             df = data.copy()
         else:
-            df = pd.DataFrame(data, columns=columns)
+            row_columns = list(columns)
+            if sheet_name == "Másodvetés" and data and len(data[0]) == len(row_columns) + 1:
+                row_columns.append("Kérelmező")
+            df = pd.DataFrame(data, columns=row_columns)
         
         numeric_columns = _identify_numeric_columns(df, sheet_name)
         

@@ -45,13 +45,21 @@ def _parse_jogcim_table(text_block: str) -> list:
     """Feldolgozza a támogatási jogcímek táblázatának szövegét."""
     data = []
     lines = text_block.strip().split('\n')
-    # Kihagyjuk a fejlécet, ha tartalmazza a kulcsszavakat
-    if lines and ("Támogatási jogcímek" in lines[0] or "Igényelt terület" in lines[0]):
+    # A fejléc lehet régi vagy új formátumú.
+    if lines and (
+        "Támogatási jogcímek" in lines[0]
+        or "Igényelt terület" in lines[0]
+        or "Igénylés összesítés" in lines[0]
+    ):
         lines = lines[1:]
     
     for line in lines:
-        # A minta: bármilyen szöveg, majd szóközök, és a végén egy szám.
-        match = re.match(r'^(.*?)\s+([\d,.]+)$', line.strip())
+        # Régi és új PDF-ekben is lehet tizedesvessző vagy pont, illetve "ha" utótag.
+        match = re.match(
+            r"^(.*?)\s+([\d]+(?:[.,]\d+)?)\s*(?:ha)?$",
+            line.strip(),
+            re.IGNORECASE,
+        )
         if match:
             nev, terulet_str = match.groups()
             try:

@@ -62,7 +62,7 @@ def _format_applicant_header(applicant_info, applicant_name):
     header = f"""# 🌾 Egységes Kérelem Elemzés
 
 **Kérelmező neve:** {applicant_info.get('name', applicant_name)}  
-**Támogatási azonosító:** {applicant_info.get('support_id', 'N/A')}  
+**Támogatási azonosító:** {applicant_info.get('mak_id') or applicant_info.get('support_id') or 'N/A'}<br>
 **Generálva:** {datetime.now().strftime('%Y.%m.%d %H:%M')}"""
     
     return header

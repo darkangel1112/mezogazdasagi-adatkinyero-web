@@ -6,6 +6,7 @@ Tömeges feldolgozás támogatással
 
 import streamlit as st
 import pandas as pd
+import json
 import tempfile
 import os
 import zipfile
@@ -17,7 +18,88 @@ from streamlit_lottie import st_lottie
 
 # Saját modulok
 from dataprocess import fovetes_parser, masodvetes_parser, osszesitok_parser, adatfeldolgozas_parser
-from dataexport import excel_exporter, markdown_exporter
+from dataexport import excel_exporter, markdown_exporter, json_transformer
+from resultmerge import merge_processed_results
+
+
+MERGED_RESULT_KEY = "__merged_result__"
+SECONDARY_COLUMNS = [
+    "Blokk", "Tábla", "Sorszám", "Típus", "Megnevezés", "Anyag", "Növény kód", "Terület"
+]
+
+
+def _secondary_dataframe(rows):
+    columns = list(SECONDARY_COLUMNS)
+    if rows and len(rows[0]) == len(columns) + 1:
+        columns.append("Kérelmező")
+    return pd.DataFrame(rows, columns=columns)
+
+
+def _result_label(result_key):
+    result = st.session_state.processed_results[result_key]
+    if result.get("is_merged"):
+        return "Összefűzött"
+    if result.get("success"):
+        applicant = result.get("analysis_data", {}).get("applicant_info", {}) or {}
+        return applicant.get("name") or result.get("filename", result_key)
+    return f"❌ {result.get('filename', result_key)}"
+
+
+def _applicant_identifier(applicant_info):
+    """A helyi kinyerő mak_id kulcsát és a régi support_id kulcsot is kezeli."""
+    return applicant_info.get("mak_id") or applicant_info.get("support_id") or "N/A"
+
+
+def _merge_checkbox_key(result_key):
+    return f"merge_checkbox_{result_key}"
+
+
+def _prepare_uploaded_files():
+    """Az új kérelem(ek) feldolgozása előtt érvényteleníti a régi összefűzést."""
+    upload_key = f"uploader_{st.session_state.get('uploader_key', 0)}"
+    if not st.session_state.get(upload_key):
+        return
+
+    st.session_state.processed_results.pop(MERGED_RESULT_KEY, None)
+    if st.session_state.get("selected_result") == MERGED_RESULT_KEY:
+        st.session_state.pop("selected_result", None)
+
+
+@st.dialog("Kérelmek összefűzése", width="large")
+def _show_merge_dialog():
+    results = st.session_state.processed_results
+    candidates = [
+        key for key, result in results.items()
+        if result.get("success") and not result.get("is_merged")
+    ]
+    st.write("Jelöld ki azokat a kérelmeket, amelyek ugyanahhoz az üzemhez tartoznak.")
+    selected_keys = []
+    for key in candidates:
+        label = _result_label(key)
+        filename = results[key].get("filename", key)
+        if filename != label:
+            label = f"{label} — {filename}"
+        if st.checkbox(label, key=_merge_checkbox_key(key)):
+            selected_keys.append(key)
+
+    submitted = st.button(
+        "Összefűzés",
+        type="primary",
+        use_container_width=True,
+        disabled=len(selected_keys) < 2,
+    )
+    if not submitted:
+        return
+
+    try:
+        merged_result = merge_processed_results([results[key] for key in selected_keys])
+    except Exception as exc:
+        st.error(f"Az összefűzés nem sikerült: {exc}")
+        return
+
+    results[MERGED_RESULT_KEY] = merged_result
+    st.session_state.selected_result = MERGED_RESULT_KEY
+    st.rerun()
 
 
 # ============================================================================
@@ -81,8 +163,7 @@ def generate_pdf_report(analysis_data, fovetes_df, masodvetes_list, summary_dict
     
     # ===== 4. MÁSODVETÉS TÁBLÁZAT (Landscape) =====
     if masodvetes_list:
-        masodvetes_df = pd.DataFrame(masodvetes_list,
-            columns=['Blokk', 'Tabla', 'Sorszam', 'Tipus', 'Megnevezes', 'Anyag', 'Noveny kod', 'Terulet'])
+        masodvetes_df = _secondary_dataframe(masodvetes_list)
         _add_dataframe_table(pdf, masodvetes_df, "Masodvetes/Agrotechnikai Adatok", use_custom_font)
     
     # ===== 5. TÁMOGATÁSI JOGCÍMEK (Landscape) =====
@@ -144,7 +225,7 @@ def _add_cover_page(pdf, applicant_info, applicant_name, use_custom):
     pdf.cell(60, 8, 'Nev:', border=0)
     pdf.cell(0, 8, applicant_info.get('name', 'N/A'), border=0, ln=True)
     pdf.cell(60, 8, 'Azonosito:', border=0)
-    pdf.cell(0, 8, applicant_info.get('support_id', 'N/A'), border=0, ln=True)
+    pdf.cell(0, 8, _applicant_identifier(applicant_info), border=0, ln=True)
     pdf.ln(10)
     
     pdf.set_font('Roboto' if use_custom else 'Arial', '', 9)
@@ -161,7 +242,15 @@ def _add_dataframe_table(pdf, df, title, use_custom):
     
     page_width = 297 - 20
     num_cols = len(df.columns)
-    col_width = page_width / num_cols if num_cols > 0 else 50
+    # A fix, egyenlő szélességű oszlopoknál a hosszabb szövegek egymásra
+    # csúsztak, különösen az összefűzött fővetés táblában, ahol a kérelmező
+    # neve is megjelenik. A szélességet az oszlop szerepéhez igazítjuk.
+    if num_cols:
+        weights = [_pdf_column_weight(col) for col in df.columns]
+        total_weight = sum(weights)
+        col_widths = [page_width * weight / total_weight for weight in weights]
+    else:
+        col_widths = []
     
     if num_cols > 10:
         font_size = 7
@@ -174,8 +263,8 @@ def _add_dataframe_table(pdf, df, title, use_custom):
     pdf.set_font('Roboto' if use_custom else 'Arial', 'B', font_size)
     pdf.set_fill_color(221, 235, 247)
     
-    for col in df.columns:
-        col_text = str(col)[:25] if len(str(col)) > 25 else str(col)
+    for col, col_width in zip(df.columns, col_widths):
+        col_text = _fit_pdf_cell_text(pdf, str(col), col_width)
         pdf.cell(col_width, 7, col_text, border=1, fill=True)
     pdf.ln()
     
@@ -183,7 +272,9 @@ def _add_dataframe_table(pdf, df, title, use_custom):
     pdf.set_font('Roboto' if use_custom else 'Arial', '', font_size)
     
     row_height = 6
-    max_rows_per_page = 35
+    # A PDF automatikus oldaltörése ennél korábban is bekövetkezhet, ezért
+    # kézzel, biztonságosan a lap alja előtt kezdjük a következő oldalt.
+    max_rows_per_page = 24
     
     for idx, (_, row) in enumerate(df.iterrows()):
         if idx > 0 and idx % max_rows_per_page == 0:
@@ -191,18 +282,58 @@ def _add_dataframe_table(pdf, df, title, use_custom):
             
             pdf.set_font('Roboto' if use_custom else 'Arial', 'B', font_size)
             pdf.set_fill_color(221, 235, 247)
-            for col in df.columns:
-                col_text = str(col)[:25] if len(str(col)) > 25 else str(col)
+            for col, col_width in zip(df.columns, col_widths):
+                col_text = _fit_pdf_cell_text(pdf, str(col), col_width)
                 pdf.cell(col_width, 7, col_text, border=1, fill=True)
             pdf.ln()
             pdf.set_font('Roboto' if use_custom else 'Arial', '', font_size)
         
-        for col in df.columns:
+        for col, col_width in zip(df.columns, col_widths):
             cell_value = str(row[col]) if pd.notna(row[col]) else ''
-            if len(cell_value) > 30:
-                cell_value = cell_value[:27] + '...'
+            cell_value = _fit_pdf_cell_text(pdf, cell_value, col_width)
             pdf.cell(col_width, row_height, cell_value, border=1)
         pdf.ln()
+
+
+def _pdf_column_weight(column_name):
+    """PDF oszlopszélesség súly az oszlop neve alapján."""
+    name = str(column_name).strip().casefold()
+    if 'kérelmező' in name or 'kerelmezo' in name:
+        return 1.55
+    if name in {'név', 'nev', 'hasznosítási kód megnevezése'}:
+        return 1.45
+    if 'település' in name or 'telepules' in name:
+        return 1.15
+    if 'vármegye' in name or 'varmegye' in name:
+        return 1.05
+    if 'blokk' in name:
+        return 1.0
+    if 'dátum' in name or 'datum' in name or 'telepítés' in name or 'telepites' in name:
+        return 1.0
+    if 'méret' in name or 'terület' in name or 'terulet' in name or '(ha)' in name:
+        return 0.95
+    if 'kód' in name or 'kod' in name:
+        return 0.78
+    if name in {'tábla', 'tabla', 'sorszám', 'sorszam'}:
+        return 0.68
+    if 'öko' in name or 'nitrát' in name or 'nitrat' in name:
+        return 0.7
+    return 0.9
+
+
+def _fit_pdf_cell_text(pdf, text, width, padding=1.2):
+    """A cella szövegét a tényleges betűszélesség alapján rövidíti."""
+    value = str(text)
+    available_width = max(0, width - padding * 2)
+    if pdf.get_string_width(value) <= available_width:
+        return value
+
+    ellipsis = '...'
+    if pdf.get_string_width(ellipsis) > available_width:
+        return ''
+    while value and pdf.get_string_width(value + ellipsis) > available_width:
+        value = value[:-1]
+    return value.rstrip() + ellipsis
 
 
 def _add_statistics_page(pdf, extra_stats, fovetes_df, use_custom):
@@ -276,7 +407,7 @@ def process_single_pdf(pdf_path, filename):
 
 
 def generate_zip_export(results_dict):
-    """ZIP generálás Excel + PDF + Markdown tartalommal"""
+    """ZIP készítése az egyedi exportokból és az összefűzött Excel/PDF-ből."""
     zip_buffer = BytesIO()
     
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
@@ -284,10 +415,13 @@ def generate_zip_export(results_dict):
             if not result.get('success', False):
                 continue
             
-            # Fájlnév a bemeneti PDF-ből
-            base_filename = result['filename'].rsplit('.', 1)[0] if '.' in result['filename'] else result['filename']
+            is_merged = result.get('is_merged', False)
+            result_filename = result.get('filename', key)
+            base_filename = result_filename.rsplit('.', 1)[0] if '.' in result_filename else result_filename
+            applicant_name = result.get('analysis_data', {}).get('applicant_info', {}).get('name', 'Ismeretlen')
             
             # EXCEL
+            excel_tmp_path = None
             try:
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp_excel:
                     excel_tmp_path = tmp_excel.name
@@ -313,13 +447,14 @@ def generate_zip_export(results_dict):
                 
                 with open(excel_tmp_path, 'rb') as f:
                     zip_file.writestr(f"{base_filename}.xlsx", f.read())
-                os.unlink(excel_tmp_path)
             except Exception as e:
                 st.warning(f"Excel hiba ({base_filename}): {e}")
+            finally:
+                if excel_tmp_path and os.path.exists(excel_tmp_path):
+                    os.unlink(excel_tmp_path)
             
             # PDF
             try:
-                applicant_name = result['analysis_data'].get('applicant_info', {}).get('name', 'Ismeretlen')
                 pdf_bytes = generate_pdf_report(
                     result['analysis_data'], result['fovetes_df'],
                     result['masodvetes_list'], result['summary_dict'], applicant_name
@@ -328,16 +463,30 @@ def generate_zip_export(results_dict):
             except Exception as e:
                 st.warning(f"PDF hiba ({base_filename}): {e}")
             
-            # MARKDOWN
-            try:
-                applicant_name = result['analysis_data'].get('applicant_info', {}).get('name', 'Ismeretlen')
-                markdown_content = markdown_exporter.generate_markdown_report(
-                    result['analysis_data'], result['fovetes_df'],
-                    result['masodvetes_list'], result['summary_dict'], applicant_name
-                )
-                zip_file.writestr(f"{base_filename}.md", markdown_content.encode('utf-8'))
-            except Exception as e:
-                st.warning(f"Markdown hiba ({base_filename}): {e}")
+            if not is_merged:
+                # Markdown és JSON az egyedi kérelmekhez érhető el.
+                markdown_content = ""
+                try:
+                    markdown_content = markdown_exporter.generate_markdown_report(
+                        result['analysis_data'], result['fovetes_df'],
+                        result['masodvetes_list'], result['summary_dict'], applicant_name
+                    )
+                    zip_file.writestr(f"{base_filename}.md", markdown_content.encode('utf-8'))
+                except Exception as e:
+                    st.warning(f"Markdown hiba ({base_filename}): {e}")
+
+                try:
+                    json_data = json_transformer.generate_ek_json_response(
+                        result['analysis_data'], result['fovetes_df'],
+                        result['masodvetes_list'], result['summary_dict']
+                    )
+                    json_data["markdown"] = markdown_content
+                    zip_file.writestr(
+                        f"{base_filename}.json",
+                        json.dumps(json_data, indent=4, ensure_ascii=False).encode('utf-8'),
+                    )
+                except Exception as e:
+                    st.warning(f"JSON hiba ({base_filename}): {e}")
     
     zip_buffer.seek(0)
     return zip_buffer
@@ -420,6 +569,7 @@ st.markdown("""
 # SIDEBAR
 # ============================================================================
 
+open_merge_dialog = False
 with st.sidebar:
     if os.path.exists("assets/logo.png"):
         st.image("assets/logo.png", use_container_width=True)
@@ -432,8 +582,16 @@ with st.sidebar:
         
         zip_buffer = generate_zip_export(st.session_state.processed_results)
         
+        has_merged_result = any(
+            result.get("success") and result.get("is_merged")
+            for result in st.session_state.processed_results.values()
+        )
+        zip_label = (
+            "🗜️ ZIP Letöltése (egyedi + összefűzött)"
+            if has_merged_result else "🗜️ ZIP Letöltése (egyedi kérelmek)"
+        )
         st.download_button(
-            label="🗜️ ZIP Letöltése (Excel + PDF + Markdown)",
+            label=zip_label,
             data=zip_buffer,
             file_name=f"Mezogazdasagi_Elemzesek_{datetime.now().strftime('%Y%m%d_%H%M')}.zip",
             mime="application/zip",
@@ -447,15 +605,24 @@ with st.sidebar:
         file_keys = list(st.session_state.processed_results.keys())
         
         if file_keys:
+            successful_count = sum(
+                1 for key in file_keys
+                if st.session_state.processed_results[key].get("success")
+                and not st.session_state.processed_results[key].get("is_merged")
+            )
+            if successful_count >= 2:
+                if st.button("🔗 Kérelmek összefűzése (Béta)", use_container_width=True):
+                    for result_key in file_keys:
+                        st.session_state.pop(_merge_checkbox_key(result_key), None)
+                    open_merge_dialog = True
+
             selected_file = st.selectbox(
                 "Válassz egy kérelmet:",
                 options=file_keys,
-                format_func=lambda x: st.session_state.processed_results[x]['analysis_data'].get(
-                    'applicant_info', {}).get('name', x) 
-                    if st.session_state.processed_results[x].get('success') 
-                    else f"❌ {x}",
+                format_func=_result_label,
                 label_visibility="collapsed",
-                help="Válasszon a feldolgozott kérelmek közül (nem kereshető)"
+                help="Válasszon a feldolgozott kérelmek közül (nem kereshető)",
+                key="selected_result",
             )
         else:
             selected_file = None
@@ -463,11 +630,16 @@ with st.sidebar:
         st.markdown("---")
         
         if st.button("🗑️ Összes Törlése (Hard Reset)", use_container_width=True):
+            for result_key in st.session_state.processed_results:
+                st.session_state.pop(_merge_checkbox_key(result_key), None)
             st.session_state.processed_results = {}
             st.session_state.uploader_key += 1  # Reset file uploader
             st.rerun()
     else:
         st.info("📤 Töltsön fel PDF fájlokat!")
+
+if open_merge_dialog:
+    _show_merge_dialog()
 
 # ============================================================================
 # HEADER
@@ -509,16 +681,24 @@ with st.form("upload_form", clear_on_submit=False):
         key=f"uploader_{st.session_state.uploader_key}"  # Dynamic key for hard reset
     )
     
-    submitted = st.form_submit_button("🌾 Elemzés Indítása", type="primary", use_container_width=True)
+    submitted = st.form_submit_button(
+        "🌾 Elemzés Indítása",
+        type="primary",
+        use_container_width=True,
+        on_click=_prepare_uploaded_files,
+    )
 
 st.warning("⚠️ **Adatvédelem:** A feltöltött fájlok nem kerülnek mentésre a szerveren. Az oldal bezárásával az adatok elvesznek.")
 st.warning("⚠️**Figyelem:** A program a regex illesztés miatt tévedhet, minden alkalommal ellenőrizze az eredményeket!")
+st.warning("⚠️ **Az összefűzés funkció, jelenleg Béta üzemmódban van, fejlesztés alatt áll, az eredményeket mindenképpen ellenőrizni kell!**")
 
 # ============================================================================
 # FELDOLGOZÁS - CSAK HA A FORM EL LETT KÜLDVE!
 # ============================================================================
 
 if submitted and uploaded_files:
+    st.session_state.processed_results.pop(MERGED_RESULT_KEY, None)
+
     with st.status("📊 Fájlok elemzése folyamatban...", expanded=True) as status:
         progress_bar = st.progress(0)
         
@@ -574,7 +754,7 @@ if st.session_state.processed_results and 'selected_file' in locals() and select
             with col1:
                 st.info(f"**Név:** {applicant.get('name', 'N/A')}")
             with col2:
-                st.info(f"**Azonosító:** {applicant.get('support_id', 'N/A')}")
+                st.info(f"**Azonosító:** {_applicant_identifier(applicant)}")
             
             st.markdown("---")
             st.subheader("Összesítő Táblázat")
@@ -602,8 +782,7 @@ if st.session_state.processed_results and 'selected_file' in locals() and select
         
         with tab3:
             if masodvetes_list:
-                masodvetes_df = pd.DataFrame(masodvetes_list,
-                    columns=['Blokk', 'Tábla', 'Sorszám', 'Típus', 'Megnevezés', 'Anyag', 'Növény kód', 'Terület'])
+                masodvetes_df = _secondary_dataframe(masodvetes_list)
                 st.dataframe(masodvetes_df, use_container_width=True, hide_index=True)
                 st.caption(f"Összesen {len(masodvetes_list)} bejegyzés")
             else:
@@ -631,12 +810,13 @@ if st.session_state.processed_results and 'selected_file' in locals() and select
                                use_container_width=True, hide_index=True)
         
         with tab5:
-            col1, col2, col3 = st.columns(3)
+            is_merged = result.get("is_merged", False)
+            export_columns = st.columns(2 if is_merged else 4)
             
             # Fájlnév a bemeneti PDF-ből
             base_filename = result['filename'].rsplit('.', 1)[0] if '.' in result['filename'] else result['filename']
             
-            with col1:
+            with export_columns[0]:
                 st.markdown("### 📊 Excel Export")
                 with tempfile.NamedTemporaryFile(delete=False, suffix='.xlsx') as tmp:
                     excel_tmp = tmp.name
@@ -673,7 +853,7 @@ if st.session_state.processed_results and 'selected_file' in locals() and select
                 except Exception as e:
                     st.error(f"Hiba: {e}")
             
-            with col2:
+            with export_columns[1]:
                 st.markdown("### 📄 PDF Riport")
                 try:
                     pdf_bytes = generate_pdf_report(
@@ -690,22 +870,41 @@ if st.session_state.processed_results and 'selected_file' in locals() and select
                 except Exception as e:
                     st.error(f"PDF hiba: {e}")
             
-            with col3:
-                st.markdown("### 📝 Markdown Export")
-                try:
-                    markdown_content = markdown_exporter.generate_markdown_report(
-                        analysis_data, fovetes_df, masodvetes_list,
-                        summary_dict, applicant.get('name', 'adat')
-                    )
-                    st.download_button(
-                        "⬇️ Markdown Letöltés",
-                        data=markdown_content.encode('utf-8'),
-                        file_name=f"{base_filename}.md",
-                        mime="text/markdown",
-                        use_container_width=True
-                    )
-                except Exception as e:
-                    st.error(f"Markdown hiba: {e}")
+            if not is_merged:
+                with export_columns[2]:
+                    st.markdown("### 📝 Markdown Export")
+                    markdown_content = ""
+                    try:
+                        markdown_content = markdown_exporter.generate_markdown_report(
+                            analysis_data, fovetes_df, masodvetes_list,
+                            summary_dict, applicant.get('name', 'adat')
+                        )
+                        st.download_button(
+                            "⬇️ Markdown Letöltés",
+                            data=markdown_content.encode('utf-8'),
+                            file_name=f"{base_filename}.md",
+                            mime="text/markdown",
+                            use_container_width=True
+                        )
+                    except Exception as e:
+                        st.error(f"Markdown hiba: {e}")
+
+                with export_columns[3]:
+                    st.markdown("### 🧬 JSON API Export")
+                    try:
+                        json_data = json_transformer.generate_ek_json_response(
+                            analysis_data, fovetes_df, masodvetes_list, summary_dict
+                        )
+                        json_data["markdown"] = markdown_content
+                        st.download_button(
+                            "⬇️ JSON Letöltés",
+                            data=json.dumps(json_data, indent=4, ensure_ascii=False),
+                            file_name=f"{base_filename}.json",
+                            mime="application/json",
+                            use_container_width=True,
+                        )
+                    except Exception as e:
+                        st.error(f"JSON hiba: {e}")
     else:
         st.error(f"❌ Hiba: {result.get('error', 'Ismeretlen hiba')}")
 
@@ -727,4 +926,4 @@ else:
         """)
 
 st.markdown("---")
-st.caption("🌾 Mezőgazdasági Adatkinyerő v7.5 FINAL | Production Ready | © 2025")
+st.caption("🌾 Mezőgazdasági Adatkinyerő v8.0 FINAL | Production Ready | © 2025")
