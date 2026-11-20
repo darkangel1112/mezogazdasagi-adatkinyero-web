@@ -6,20 +6,22 @@ Tömeges feldolgozás támogatással
 
 import streamlit as st
 import pandas as pd
-import json
 import tempfile
 import os
+import json
 import zipfile
 import requests
 from io import BytesIO
 from datetime import datetime
+from pathlib import Path
 from fpdf import FPDF
 from streamlit_lottie import st_lottie
+from unidecode import unidecode  # ASCII konverzió magyar karakterekhez
 
 # Saját modulok
-from dataprocess import fovetes_parser, masodvetes_parser, osszesitok_parser, adatfeldolgozas_parser
-from dataexport import excel_exporter, markdown_exporter, json_transformer
-from resultmerge import merge_processed_results
+from ek_web.dataprocess import fovetes_parser, masodvetes_parser, osszesitok_parser, adatfeldolgozas_parser
+from ek_web.dataexport import excel_exporter, markdown_exporter, json_transformer
+from ek_web.resultmerge import merge_processed_results
 
 
 MERGED_RESULT_KEY = "__merged_result__"
@@ -35,6 +37,10 @@ def _secondary_dataframe(rows):
     return pd.DataFrame(rows, columns=columns)
 
 
+def _applicant_identifier(applicant_info):
+    return applicant_info.get("support_id") or applicant_info.get("mak_id") or "N/A"
+
+
 def _result_label(result_key):
     result = st.session_state.processed_results[result_key]
     if result.get("is_merged"):
@@ -43,11 +49,6 @@ def _result_label(result_key):
         applicant = result.get("analysis_data", {}).get("applicant_info", {}) or {}
         return applicant.get("name") or result.get("filename", result_key)
     return f"❌ {result.get('filename', result_key)}"
-
-
-def _applicant_identifier(applicant_info):
-    """A helyi kinyerő mak_id kulcsát és a régi support_id kulcsot is kezeli."""
-    return applicant_info.get("mak_id") or applicant_info.get("support_id") or "N/A"
 
 
 def _merge_checkbox_key(result_key):
@@ -92,14 +93,12 @@ def _scroll_to_app_top():
 
 
 def _prepare_uploaded_files():
-    """Az új kérelem(ek) feldolgozása előtt érvényteleníti a régi összefűzést."""
+    """Új kérelem beküldésekor az előző összefűzött eredmény már nem érvényes."""
     upload_key = f"uploader_{st.session_state.get('uploader_key', 0)}"
-    if not st.session_state.get(upload_key):
-        return
-
-    st.session_state.processed_results.pop(MERGED_RESULT_KEY, None)
-    if st.session_state.get("selected_result") == MERGED_RESULT_KEY:
-        st.session_state.pop("selected_result", None)
+    if st.session_state.get(upload_key):
+        st.session_state.processed_results.pop(MERGED_RESULT_KEY, None)
+        if st.session_state.get("selected_result") == MERGED_RESULT_KEY:
+            st.session_state.pop("selected_result", None)
 
 
 @st.dialog("Kérelmek összefűzése", width="large")
@@ -109,6 +108,7 @@ def _show_merge_dialog():
         key for key, result in results.items()
         if result.get("success") and not result.get("is_merged")
     ]
+
     st.write("Jelöld ki azokat a kérelmeket, amelyek ugyanahhoz az üzemhez tartoznak.")
     selected_keys = []
     for key in candidates:
@@ -137,6 +137,18 @@ def _show_merge_dialog():
     results[MERGED_RESULT_KEY] = merged_result
     st.session_state.selected_result = MERGED_RESULT_KEY
     st.rerun()
+
+
+@st.dialog("Felhasználói súgó", width="large")
+def _show_help_dialog():
+    guide_path = Path(__file__).resolve().parent / "ek_web" / "user_guide.md"
+    try:
+        st.markdown(guide_path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        st.error(f"A súgó nem tölthető be: {exc}")
+
+    if st.button("Bezárás", key="close_user_guide"):
+        st.rerun()
 
 
 # ============================================================================
@@ -169,22 +181,9 @@ def generate_pdf_report(analysis_data, fovetes_df, masodvetes_list, summary_dict
     pdf = FPDF()
     pdf.set_auto_page_break(auto=True, margin=10)
     
-    # JAVÍTOTT Font betöltés - ROBUSZTUS DUPLA REGISZTRÁCIÓ
-    font_path = os.path.join("assets", "Roboto-Regular.ttf")
-    use_custom_font = False
-    
-    if os.path.exists(font_path):
-        try:
-            # KRITIKUS: Mindkét stílus regisztrációja KÖTELEZŐ!
-            pdf.add_font('Roboto', '', font_path, uni=True)    # Regular
-            pdf.add_font('Roboto', 'B', font_path, uni=True)   # Bold (ugyanaz!)
-            use_custom_font = True
-        except Exception as e:
-            st.warning(f"Font betöltési hiba: {e}. Arial fontot használunk.")
-            use_custom_font = False
-    else:
-        st.warning("⚠️ Roboto font nem található. Arial fontot használunk.")
-        use_custom_font = False
+    # EGYSZERŰ MEGOLDÁS: Arial font ASCII szöveggel (unidecode)
+    # Nem kell külön Unicode font, a magyar karakterek ASCII-re konvertálódnak
+    use_custom_font = False  # Mindig Arial-t használunk
     
     # ===== 1. FEDLAP (Portrait) =====
     _add_cover_page(pdf, analysis_data.get('applicant_info', {}), applicant_name, use_custom_font)
@@ -215,7 +214,7 @@ def generate_pdf_report(analysis_data, fovetes_df, masodvetes_list, summary_dict
         hasznositas_df = pd.DataFrame(hasznositas_data, columns=['Kod', 'Megnevezes', 'Terulet (ha)'])
         _add_dataframe_table(pdf, hasznositas_df, "Hasznositasi Adatok", use_custom_font)
         
-        pdf.set_font('Roboto' if use_custom_font else 'Arial', 'B', 9)
+        pdf.set_font('DejaVu' if use_custom_font else 'Arial', 'B', 9)
         pdf.cell(0, 8, f"Osszesen: {summary_dict.get('hasznositas_total', 0):.4f} ha", ln=True)
     
     # ===== 7. BLOKKHASZNÁLAT (Landscape) =====
@@ -224,7 +223,7 @@ def generate_pdf_report(analysis_data, fovetes_df, masodvetes_list, summary_dict
         blokk_df = pd.DataFrame(blokk_data, columns=['Blokk azonosito', 'Terulet (ha)'])
         _add_dataframe_table(pdf, blokk_df, "Blokkhasználat", use_custom_font)
         
-        pdf.set_font('Roboto' if use_custom_font else 'Arial', 'B', 9)
+        pdf.set_font('DejaVu' if use_custom_font else 'Arial', 'B', 9)
         pdf.cell(0, 8, f"Osszesen: {summary_dict.get('blokkok_total', 0):.4f} ha", ln=True)
     
     # ===== 8. STATISZTIKÁK (Portrait) =====
@@ -252,42 +251,90 @@ def _add_cover_page(pdf, applicant_info, applicant_name, use_custom):
     else:
         pdf.ln(10)
     
-    pdf.set_font('Roboto' if use_custom else 'Arial', 'B', 20)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', 'B', 20)
     pdf.set_text_color(46, 125, 50)
-    pdf.cell(0, 15, 'Egysеges Kerelem Elemzes', align='C', ln=True)
+    pdf.cell(0, 15, unidecode('Egységes Kérelem Elemzés'), align='C', ln=True)
     pdf.set_text_color(0, 0, 0)
     pdf.ln(10)
     
-    pdf.set_font('Roboto' if use_custom else 'Arial', '', 12)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', '', 12)
     pdf.cell(60, 8, 'Nev:', border=0)
-    pdf.cell(0, 8, applicant_info.get('name', 'N/A'), border=0, ln=True)
+    pdf.cell(0, 8, unidecode(applicant_info.get('name', 'N/A')), border=0, ln=True)
     pdf.cell(60, 8, 'Azonosito:', border=0)
-    pdf.cell(0, 8, _applicant_identifier(applicant_info), border=0, ln=True)
+    pdf.cell(0, 8, unidecode(str(_applicant_identifier(applicant_info))), border=0, ln=True)
     pdf.ln(10)
     
-    pdf.set_font('Roboto' if use_custom else 'Arial', '', 9)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', '', 9)
     pdf.cell(0, 8, f'Generalva: {datetime.now().strftime("%Y.%m.%d %H:%M")}', align='C', ln=True)
 
 
+def _calculate_column_widths(df, pdf, font_size, available_width=277):
+    """
+    Intelligens oszlopszélesség kalkulátor - tartalom alapján
+    
+    Args:
+        df: DataFrame
+        pdf: FPDF objektum
+        font_size: Betűméret
+        available_width: Rendelkezésre álló szélesség (mm)
+    
+    Returns:
+        List[float]: Oszlopszélességek mm-ben
+    """
+    pdf.set_font('Arial', '', font_size)
+    
+    col_widths = []
+    
+    for col in df.columns:
+        # Oszlopnév szélessége
+        col_name = str(col)[:25] if len(str(col)) > 25 else str(col)
+        col_name = unidecode(col_name)
+        header_width = pdf.get_string_width(col_name) + 4  # +4mm padding
+        
+        # Max tartalom szélessége (első 100 sor alapján)
+        max_content_width = header_width
+        sample_size = min(100, len(df))
+        
+        for val in df[col].head(sample_size):
+            if pd.notna(val):
+                val_str = str(val)[:50]  # Max 50 karakter (elég hosszú szövegek)
+                val_str = unidecode(val_str)
+                content_width = pdf.get_string_width(val_str) + 4
+                max_content_width = max(max_content_width, content_width)
+        
+        col_widths.append(max_content_width)
+    
+    # Normalizálás: korlátok alkalmazása
+    MIN_WIDTH = 12  # mm
+    MAX_WIDTH = 70  # mm
+    
+    col_widths = [max(MIN_WIDTH, min(MAX_WIDTH, w)) for w in col_widths]
+    
+    # Arányosítás a rendelkezésre álló szélességhez
+    total_width = sum(col_widths)
+    
+    if total_width > available_width:
+        # Lejjebb skálázás
+        scale = available_width / total_width
+        col_widths = [w * scale for w in col_widths]
+    elif total_width < available_width * 0.8:
+        # Kicsit szélesítés (80%-nál kisebb használat esetén)
+        scale = (available_width * 0.95) / total_width
+        col_widths = [min(MAX_WIDTH, w * scale) for w in col_widths]
+    
+    return col_widths
+
+
 def _add_dataframe_table(pdf, df, title, use_custom):
-    """Univerzális DataFrame → PDF táblázat konvertáló"""
+    """Univerzális DataFrame → PDF táblázat konvertáló INTELLIGENS OSZLOPSZÉLESSÉGGEL"""
     pdf.add_page(orientation='L')
     
-    pdf.set_font('Roboto' if use_custom else 'Arial', 'B', 12)
-    pdf.cell(0, 10, title, ln=True)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', 'B', 12)
+    pdf.cell(0, 10, unidecode(title), ln=True)
     pdf.ln(3)
     
     page_width = 297 - 20
     num_cols = len(df.columns)
-    # A fix, egyenlő szélességű oszlopoknál a hosszabb szövegek egymásra
-    # csúsztak, különösen az összefűzött fővetés táblában, ahol a kérelmező
-    # neve is megjelenik. A szélességet az oszlop szerepéhez igazítjuk.
-    if num_cols:
-        weights = [_pdf_column_weight(col) for col in df.columns]
-        total_weight = sum(weights)
-        col_widths = [page_width * weight / total_weight for weight in weights]
-    else:
-        col_widths = []
     
     if num_cols > 10:
         font_size = 7
@@ -296,112 +343,126 @@ def _add_dataframe_table(pdf, df, title, use_custom):
     else:
         font_size = 9
     
+    # INTELLIGENS OSZLOPSZÉLESSÉG KALKULÁCIÓ
+    col_widths = _calculate_column_widths(df, pdf, font_size, page_width)
+    
     # FEJLÉC
-    pdf.set_font('Roboto' if use_custom else 'Arial', 'B', font_size)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', 'B', font_size)
     pdf.set_fill_color(221, 235, 247)
     
-    for col, col_width in zip(df.columns, col_widths):
-        col_text = _fit_pdf_cell_text(pdf, str(col), col_width)
-        pdf.cell(col_width, 7, col_text, border=1, fill=True)
+    for idx, col in enumerate(df.columns):
+        col_text = str(col)[:25] if len(str(col)) > 25 else str(col)
+        col_text = unidecode(col_text)  # ASCII konverzió
+        pdf.cell(col_widths[idx], 7, col_text, border=1, fill=True)
     pdf.ln()
     
     # ADATSOROK
-    pdf.set_font('Roboto' if use_custom else 'Arial', '', font_size)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', '', font_size)
     
     row_height = 6
-    # A PDF automatikus oldaltörése ennél korábban is bekövetkezhet, ezért
-    # kézzel, biztonságosan a lap alja előtt kezdjük a következő oldalt.
-    max_rows_per_page = 24
+    max_rows_per_page = 35
     
-    for idx, (_, row) in enumerate(df.iterrows()):
-        if idx > 0 and idx % max_rows_per_page == 0:
+    for row_idx, (_, row) in enumerate(df.iterrows()):
+        # 1. Először számoljuk ki a szükséges magasságot (max sorok száma)
+        max_lines = 1
+        row_data = [] # (text, width, num_lines) tuple-öket tárolunk
+        
+        pdf.set_font('DejaVu' if use_custom else 'Arial', '', font_size)
+        
+        for idx, col in enumerate(df.columns):
+            cell_value = str(row[col]) if pd.notna(row[col]) else ''
+            cell_value = unidecode(cell_value)
+            width = col_widths[idx]
+            
+            # Kiszámoljuk hány sor kell
+            # fpdf2 built-in split_only funkciója
+            try:
+                lines = pdf.multi_cell(w=width, h=row_height, txt=cell_value, split_only=True)
+                num_lines = len(lines)
+            except:
+                # Fallback ha a split_only nem működne a verzióban: becslés
+                txt_width = pdf.get_string_width(cell_value)
+                num_lines = int(txt_width // (width - 2)) + 1
+            
+            max_lines = max(max_lines, num_lines)
+            row_data.append((cell_value, width))
+
+        # Sor magasság
+        current_row_height = max_lines * row_height
+
+        # 2. Lapozás ellenőrzése
+        # Ha a köv sor nem fér ki, új lap
+        if pdf.get_y() + current_row_height > 190: # Landscape A4 kb 190mm hasznos magasság (marginokkal)
             pdf.add_page(orientation='L')
             
-            pdf.set_font('Roboto' if use_custom else 'Arial', 'B', font_size)
+            # Fejléc újra
+            pdf.set_font('DejaVu' if use_custom else 'Arial', 'B', font_size)
             pdf.set_fill_color(221, 235, 247)
-            for col, col_width in zip(df.columns, col_widths):
-                col_text = _fit_pdf_cell_text(pdf, str(col), col_width)
-                pdf.cell(col_width, 7, col_text, border=1, fill=True)
+            for idx, col in enumerate(df.columns):
+                col_text = str(col)[:25] if len(str(col)) > 25 else str(col)
+                col_text = unidecode(col_text)
+                pdf.cell(col_widths[idx], 7, col_text, border=1, fill=True)
             pdf.ln()
-            pdf.set_font('Roboto' if use_custom else 'Arial', '', font_size)
+            pdf.set_font('DejaVu' if use_custom else 'Arial', '', font_size)
+
+        # 3. Kiírás
+        # Trükk: MultiCell csak ír, a keretet Rect-tel húzzuk meg, hogy egyforma magas legyen
+        start_y = pdf.get_y()
+        curr_x = pdf.get_x()
         
-        for col, col_width in zip(df.columns, col_widths):
-            cell_value = str(row[col]) if pd.notna(row[col]) else ''
-            cell_value = _fit_pdf_cell_text(pdf, cell_value, col_width)
-            pdf.cell(col_width, row_height, cell_value, border=1)
-        pdf.ln()
-
-
-def _pdf_column_weight(column_name):
-    """PDF oszlopszélesség súly az oszlop neve alapján."""
-    name = str(column_name).strip().casefold()
-    if 'kérelmező' in name or 'kerelmezo' in name:
-        return 1.55
-    if name in {'név', 'nev', 'hasznosítási kód megnevezése'}:
-        return 1.45
-    if 'település' in name or 'telepules' in name:
-        return 1.15
-    if 'vármegye' in name or 'varmegye' in name:
-        return 1.05
-    if 'blokk' in name:
-        return 1.0
-    if 'dátum' in name or 'datum' in name or 'telepítés' in name or 'telepites' in name:
-        return 1.0
-    if 'méret' in name or 'terület' in name or 'terulet' in name or '(ha)' in name:
-        return 0.95
-    if 'kód' in name or 'kod' in name:
-        return 0.78
-    if name in {'tábla', 'tabla', 'sorszám', 'sorszam'}:
-        return 0.68
-    if 'öko' in name or 'nitrát' in name or 'nitrat' in name:
-        return 0.7
-    return 0.9
-
-
-def _fit_pdf_cell_text(pdf, text, width, padding=1.2):
-    """A cella szövegét a tényleges betűszélesség alapján rövidíti."""
-    value = str(text)
-    available_width = max(0, width - padding * 2)
-    if pdf.get_string_width(value) <= available_width:
-        return value
-
-    ellipsis = '...'
-    if pdf.get_string_width(ellipsis) > available_width:
-        return ''
-    while value and pdf.get_string_width(value + ellipsis) > available_width:
-        value = value[:-1]
-    return value.rstrip() + ellipsis
+        for i, (text, width) in enumerate(row_data):
+            # Szöveg kiírása (keret nélkül)
+            pdf.set_xy(curr_x, start_y)
+            pdf.multi_cell(width, row_height, text, border=0, align='L')
+            
+            # Keret rajzolása a teljes magasságra
+            pdf.rect(curr_x, start_y, width, current_row_height)
+            
+            # X léptetése
+            curr_x += width
+            
+        # Sor végén Y léptetése
+        pdf.set_y(start_y + current_row_height)
 
 
 def _add_statistics_page(pdf, extra_stats, fovetes_df, use_custom):
     """Statisztikák oldal"""
     pdf.add_page()
     
-    pdf.set_font('Roboto' if use_custom else 'Arial', 'B', 14)
-    pdf.cell(0, 10, 'Kiegeszito Statisztikak', ln=True)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', 'B', 14)
+    pdf.cell(0, 10, unidecode('Kiegészítő Statisztikák'), ln=True)
     pdf.ln(5)
     
-    pdf.set_font('Roboto' if use_custom else 'Arial', '', 11)
-    pdf.cell(0, 8, f"Tablak szama: {len(fovetes_df)}", ln=True)
-    pdf.cell(0, 8, f"Nitraterzeкeny terulet: {extra_stats.get('nitrate_sum', 0):.2f} ha", ln=True)
-    pdf.cell(0, 8, f"Top 5 tabla: {extra_stats.get('top_5_plots_sum', 0):.2f} ha", ln=True)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', '', 11)
+    pdf.cell(0, 8, unidecode(f"Osszes fovetes: {extra_stats.get('fovetes_sum', 0):.2f} ha"), ln=True)
+    pdf.cell(0, 8, unidecode(f"Osszes masodvetes: {extra_stats.get('masodvetes_sum', 0):.2f} ha"), ln=True)
+    pdf.cell(0, 8, unidecode(f"Tablak szama: {len(fovetes_df)}"), ln=True)
+    pdf.cell(0, 8, unidecode(f"Nitratezekeny terulet: {extra_stats.get('nitrate_sum', 0):.2f} ha"), ln=True)
+    pdf.cell(0, 8, unidecode(f"Top 5 tabla: {extra_stats.get('top_5_plots_sum', 0):.2f} ha"), ln=True)
     pdf.ln(5)
     
-    pdf.set_font('Roboto' if use_custom else 'Arial', 'B', 11)
-    pdf.cell(0, 8, 'Agrotechnikai muveletek:', ln=True)
-    pdf.set_font('Roboto' if use_custom else 'Arial', '', 10)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', 'B', 11)
+    pdf.cell(0, 8, unidecode('Agrotechnikai műveletek:'), ln=True)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', '', 10)
     for tech in extra_stats.get('agrotechnics', [])[:10]:
         pdf.cell(10, 6, '-', border=0)
-        pdf.cell(0, 6, tech[:100], border=0, ln=True)
+        pdf.cell(0, 6, unidecode(tech[:100]), border=0, ln=True)
     
     pdf.ln(5)
     
-    pdf.set_font('Roboto' if use_custom else 'Arial', 'B', 11)
-    pdf.cell(0, 8, 'Tamogatasi igenyek:', ln=True)
-    pdf.set_font('Roboto' if use_custom else 'Arial', '', 10)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', 'B', 11)
+    pdf.cell(0, 8, unidecode('Támogatási igények:'), ln=True)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', '', 10)
+    pdf.set_font('DejaVu' if use_custom else 'Arial', '', 10)
     for req in extra_stats.get('support_requests', [])[:10]:
+        # Handle both dictionary (new format) and string (old format)
+        if isinstance(req, dict):
+            req_name = req.get('name', '')
+        else:
+            req_name = str(req)
+            
         pdf.cell(10, 6, '+', border=0)
-        pdf.cell(0, 6, req[:100], border=0, ln=True)
+        pdf.cell(0, 6, unidecode(req_name[:100]), border=0, ln=True)
 
 
 # ============================================================================
@@ -444,7 +505,7 @@ def process_single_pdf(pdf_path, filename):
 
 
 def generate_zip_export(results_dict):
-    """ZIP készítése az egyedi exportokból és az összefűzött Excel/PDF-ből."""
+    """ZIP az összes egyedi exporttal és az összefűzött Excel/PDF-riporttal."""
     zip_buffer = BytesIO()
     
     with zipfile.ZipFile(zip_buffer, 'w', zipfile.ZIP_DEFLATED) as zip_file:
@@ -454,7 +515,8 @@ def generate_zip_export(results_dict):
             
             is_merged = result.get('is_merged', False)
             result_filename = result.get('filename', key)
-            base_filename = result_filename.rsplit('.', 1)[0] if '.' in result_filename else result_filename
+            source_stem = result_filename.rsplit('.', 1)[0] if '.' in result_filename else result_filename
+            base_filename = "Összefűzött_kivonat" if is_merged else f"{source_stem}_kivonat"
             applicant_name = result.get('analysis_data', {}).get('applicant_info', {}).get('name', 'Ismeretlen')
             
             # EXCEL
@@ -501,7 +563,6 @@ def generate_zip_export(results_dict):
                 st.warning(f"PDF hiba ({base_filename}): {e}")
             
             if not is_merged:
-                # Markdown és JSON az egyedi kérelmekhez érhető el.
                 markdown_content = ""
                 try:
                     markdown_content = markdown_exporter.generate_markdown_report(
@@ -534,7 +595,7 @@ def generate_zip_export(results_dict):
 # ============================================================================
 
 st.set_page_config(
-    page_title="Mezőgazdasági Adatkinyerő v7.5",
+    page_title="Mezőgazdasági Adatkinyerő v8.1",
     page_icon="🌾",
     layout="wide",
     initial_sidebar_state="expanded"
@@ -592,8 +653,9 @@ st.markdown("""
         background-color: #2b313e !important;
     }
     
-    div[aria-selected="true"], 
-    li[aria-selected="true"],
+    /* Selectbox dropdown: csak a dropdown opcióknál zöld, a taboknál NEM */
+    div[data-baseweb="menu"] div[aria-selected="true"],
+    div[data-baseweb="menu"] li[aria-selected="true"],
     div[role="option"]:hover {
         background-color: #4CAF50 !important;
         color: white !important;
@@ -605,6 +667,40 @@ st.markdown("""
         align-items: center !important;
         padding: 16px !important;
     }
+    /* Sötétzöld felület türkiz és zöld hangsúlyokkal. */
+    .stApp, [data-testid="stAppViewContainer"] { background: #041510; color: #e5fff6; }
+    [data-testid="stHeader"] { background: rgba(4, 21, 16, .96); }
+    [data-testid="stSidebar"] { background: #061e19; border-right: 1px solid #125044; }
+    [data-testid="stSidebar"] [data-testid="stMarkdownContainer"] { color: #d8f7eb; }
+    .main-header { color: #eafff5; letter-spacing: -.025em; }
+    .sub-header { color: #9bc8ba; }
+    [data-testid="stFileUploader"] { background: #082820; border-color: #00c994; border-radius: 16px; }
+    [data-testid="stFileUploader"]:hover { border-color: #38ffd0; background: #0b3027; box-shadow: 0 0 20px #00e5a52a; }
+    .stButton > button, .stDownloadButton > button, [data-testid="stFormSubmitButton"] button {
+        border: 1px solid #168b70; border-radius: 10px; background: #0a3c30; color: #e9fff7;
+    }
+    .stButton > button:hover, .stDownloadButton > button:hover, [data-testid="stFormSubmitButton"] button:hover {
+        border-color: #27f6bc; color: #ffffff; box-shadow: 0 0 15px #00e9aa40;
+    }
+    button[kind="primary"], [data-testid="stFormSubmitButton"] button[kind="primary"] {
+        background: #00c991; color: #032018; border-color: #00e8aa; font-weight: 700;
+    }
+    [data-testid="stDownloadButton"] button[kind="primary"],
+    [data-testid="stDownloadButton"] button[kind="primary"] * {
+        color: #04271e !important;
+        font-weight: 700 !important;
+    }
+    [data-testid="stMetric"], [data-testid="stAlert"], [data-testid="stExpander"] {
+        background: #08241d; border: 1px solid #125044; border-radius: 14px; padding: 14px;
+    }
+    [data-testid="stMetricValue"] { color: #58ffd0; }
+    [data-testid="stTabs"] [role="tab"] { color: #a6d5c8; }
+    [data-testid="stTabs"] [aria-selected="true"] { color: #38efbb; }
+    div[data-baseweb="select"] > div, div[data-baseweb="menu"] { background-color: #0a2a23 !important; color: #eafff5 !important; border-color: #17614f !important; }
+    div[data-baseweb="menu"] div[aria-selected="true"], div[data-baseweb="menu"] li[aria-selected="true"], div[role="option"]:hover { background-color: #11654f !important; }
+    [data-testid="stDialog"] [role="dialog"] { background: #08241d; color: #eafff5; }
+    .creator-credit { margin-top: 2rem; padding-top: 1rem; border-top: 1px solid #125044; color: #a6d5c8; font-size: .85rem; line-height: 1.6; }
+    .creator-credit strong { color: #e5fff6; }
     </style>
 """, unsafe_allow_html=True)
 
@@ -613,11 +709,17 @@ st.markdown("""
 # ============================================================================
 
 open_merge_dialog = False
+open_help_dialog = False
 with st.sidebar:
     if os.path.exists("assets/logo.png"):
         st.image("assets/logo.png", use_container_width=True)
     
-    st.markdown("## 🌾 Adatkinyerő v7.5")
+    st.markdown("## 🌾 Adatkinyerő v8.1")
+    st.markdown("---")
+
+    if st.button("📖 Súgó", key="open_user_guide", use_container_width=True):
+        open_help_dialog = True
+
     st.markdown("---")
     
     if st.session_state.processed_results:
@@ -649,9 +751,8 @@ with st.sidebar:
         
         if file_keys:
             successful_count = sum(
-                1 for key in file_keys
-                if st.session_state.processed_results[key].get("success")
-                and not st.session_state.processed_results[key].get("is_merged")
+                1 for result in st.session_state.processed_results.values()
+                if result.get("success") and not result.get("is_merged")
             )
             if successful_count >= 2:
                 if st.button("🔗 Kérelmek összefűzése (Béta)", use_container_width=True):
@@ -681,6 +782,13 @@ with st.sidebar:
     else:
         st.info("📤 Töltsön fel PDF fájlokat!")
 
+    st.markdown('<div class="creator-credit"><strong>Készítette: Kovács Péter</strong><br>© 2025 Kovács Péter</div>', unsafe_allow_html=True)
+    with st.expander("Felhasználási feltételek"):
+        st.write("Az alkalmazás szabadon használható. A forráskód másolása, módosítása és terjesztése a fejlesztő előzetes engedélye nélkül tilos.")
+
+if open_help_dialog:
+    _show_help_dialog()
+
 if open_merge_dialog:
     _scroll_to_app_top()
     _show_merge_dialog()
@@ -692,7 +800,7 @@ if open_merge_dialog:
 col1, col2 = st.columns([4, 1])
 with col1:
     st.markdown('<div class="main-header">🌾 Mezőgazdasági Adatkinyerő</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub-header">Egységes Kérelmek Automatikus Elemzése - v7.5 FINAL</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub-header">Egységes Kérelmek automatikus elemzése – v8.1</div>', unsafe_allow_html=True)
 with col2:
     if os.path.exists("assets/logo.png"):
         st.image("assets/logo.png", width=100)
@@ -714,6 +822,7 @@ if lottie_animation:
         st_lottie(lottie_animation, height=150, key="upload_animation")
 
 st.info("💡 **Tipp:** Több fájl feltöltéséhez jelölje ki őket egyszerre a mappájában (Ctrl+klikk vagy Shift+klikk), és húzza be őket egy csoportban!")
+st.caption("Feltöltési limit: legfeljebb 500 MB / PDF fájl.")
 
 # JAVÍTÁS: ST.FORM HASZNÁLATA A STABILITÁSÉRT!
 with st.form("upload_form", clear_on_submit=False):
@@ -741,8 +850,6 @@ st.warning("⚠️ **Az összefűzés funkció, jelenleg Béta üzemmódban van,
 # ============================================================================
 
 if submitted and uploaded_files:
-    st.session_state.processed_results.pop(MERGED_RESULT_KEY, None)
-
     with st.status("📊 Fájlok elemzése folyamatban...", expanded=True) as status:
         progress_bar = st.progress(0)
         
@@ -798,7 +905,7 @@ if st.session_state.processed_results and 'selected_file' in locals() and select
             with col1:
                 st.info(f"**Név:** {applicant.get('name', 'N/A')}")
             with col2:
-                st.info(f"**Azonosító:** {_applicant_identifier(applicant)}")
+                st.info(f"**Azonosító:** {applicant.get('support_id', 'N/A')}")
             
             st.markdown("---")
             st.subheader("Összesítő Táblázat")
@@ -809,12 +916,16 @@ if st.session_state.processed_results and 'selected_file' in locals() and select
             st.markdown("---")
             st.subheader("Kulcsmutatók")
             extra_stats = analysis_data.get('extra_stats', {})
-            col1, col2, col3 = st.columns(3)
+            col1, col2, col3, col4, col5 = st.columns(5)
             with col1:
-                st.metric("🌊 Nitrát", f"{extra_stats.get('nitrate_sum', 0):.2f} ha")
+                st.metric("🌾 Fővetés", f"{extra_stats.get('fovetes_sum', 0):.2f} ha")
             with col2:
-                st.metric("🏆 Top 5", f"{extra_stats.get('top_5_plots_sum', 0):.2f} ha")
+                st.metric("� Másodvetés", f"{extra_stats.get('masodvetes_sum', 0):.2f} ha")
             with col3:
+                st.metric("�🌊 Nitrát", f"{extra_stats.get('nitrate_sum', 0):.2f} ha")
+            with col4:
+                st.metric("🏆 Top 5", f"{extra_stats.get('top_5_plots_sum', 0):.2f} ha")
+            with col5:
                 st.metric("📊 Táblák", len(fovetes_df))
         
         with tab2:
@@ -852,13 +963,34 @@ if st.session_state.processed_results and 'selected_file' in locals() and select
                 if blokk:
                     st.dataframe(pd.DataFrame(blokk, columns=['Blokk', 'Terület']),
                                use_container_width=True, hide_index=True)
-        
+
+            # DEBUG: Nyers területértékek megjelenítése a diagnosztikához
+            with st.expander("🔍 Debug: Nyers területértékek (parser kimenet)", expanded=False):
+                st.caption("Ha itt nullák látszanak, a parser a hibás. Ha itt helyesek, az Excel konverzió a hibás.")
+                haszn_raw = summary_dict.get('hasznositas', [])
+                blokk_raw = summary_dict.get('blokkok', [])
+                col_d1, col_d2 = st.columns(2)
+                with col_d1:
+                    st.markdown("**Hasznosítás nyers adat:**")
+                    if haszn_raw:
+                        st.json(haszn_raw[:5])  # első 5 sor
+                    else:
+                        st.warning("Üres lista!")
+                with col_d2:
+                    st.markdown("**Blokkok nyers adat:**")
+                    if blokk_raw:
+                        st.json(blokk_raw[:5])  # első 5 sor
+                    else:
+                        st.warning("Üres lista!")
+
+
         with tab5:
             is_merged = result.get("is_merged", False)
             export_columns = st.columns(2 if is_merged else 4)
             
             # Fájlnév a bemeneti PDF-ből
-            base_filename = result['filename'].rsplit('.', 1)[0] if '.' in result['filename'] else result['filename']
+            base_filename = (result['filename'].rsplit('.', 1)[0] if '.' in result['filename'] else result['filename']) + "_kivonat"
+
             
             with export_columns[0]:
                 st.markdown("### 📊 Excel Export")
@@ -937,7 +1069,10 @@ if st.session_state.processed_results and 'selected_file' in locals() and select
                     st.markdown("### 🧬 JSON API Export")
                     try:
                         json_data = json_transformer.generate_ek_json_response(
-                            analysis_data, fovetes_df, masodvetes_list, summary_dict
+                            analysis_data,
+                            fovetes_df,
+                            masodvetes_list,
+                            summary_dict
                         )
                         json_data["markdown"] = markdown_content
                         st.download_button(
@@ -945,7 +1080,7 @@ if st.session_state.processed_results and 'selected_file' in locals() and select
                             data=json.dumps(json_data, indent=4, ensure_ascii=False),
                             file_name=f"{base_filename}.json",
                             mime="application/json",
-                            use_container_width=True,
+                            use_container_width=True
                         )
                     except Exception as e:
                         st.error(f"JSON hiba: {e}")
@@ -970,4 +1105,4 @@ else:
         """)
 
 st.markdown("---")
-st.caption("🌾 Mezőgazdasági Adatkinyerő v8.0 FINAL | Production Ready | © 2025")
+st.caption("🌾 Mezőgazdasági Adatkinyerő v8.1 | Készítette: Kovács Péter | © 2025 Kovács Péter")
